@@ -28,8 +28,8 @@ void setup() {
    
 
     // Tăng stack lên 4096 tránh lỗi reset
-    xTaskCreate(Task_testMagSensor, "Task_Test_Mag_Sensor", 4096, NULL, 1, NULL);
-    xTaskCreate(Task_testLCD, "Task_Test_LCD", 4096, NULL, 2, NULL);
+    xTaskCreatePinnedToCore(Task_testMagSensor, "Task_Test_Mag_Sensor", 4096, NULL, 1, NULL, 1);
+    xTaskCreatePinnedToCore(Task_testLCD, "Task_Test_LCD", 4096, NULL, 2, NULL, 0);
 }
 
 void loop() {
