@@ -1,3 +1,4 @@
+#include <TinyGPSPlus.h>
 #include <Arduino.h>
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
@@ -5,11 +6,16 @@
 #include <U8g2lib.h>
 
 #define SERIAL_BAUDRATE 9600
+#define TX_PIN 17
+#define RX_PIN 16
 
 // Khai báo màn hình OLED SH1106 (I2C)
 U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
 Adafruit_LSM303_Mag_Unified mag = Adafruit_LSM303_Mag_Unified(54321);
 Adafruit_LSM303_Accel_Unified accel = Adafruit_LSM303_Accel_Unified(12345);
+// GPRS
+HardwareSerial hardware(2);
+TinyGPSPlus gps;
 
 #define SDA 21
 #define SCK 22
@@ -28,6 +34,9 @@ float Ax = 0;
 float Ay = 0;
 float Az = 0;
 
+double lat = 0;
+double lng = 0;
+
 char buffer[100];
 uint32_t timestamp = 0;
 
@@ -43,8 +52,8 @@ void setupMagSensor(void);
 void convertData(void);
 
 // Task define 
-void Task_testLCD(void* pvParameters);
-void Task_testMagSensor(void* pvParameters);
+void Task_Display(void* pvParameters);
+void Task_ReadSensor(void* pvParameters);
 
 
 void setup() {
@@ -53,12 +62,13 @@ void setup() {
     if(xMutex != NULL){
         xSemaphoreGive(xMutex);
     }
-    Wire.begin(SDA, SCK);
+    // Wire.begin(SDA, SCK);
+    hardware.begin(9600);
    
 
     // Tăng stack lên 4096 tránh lỗi reset
-    xTaskCreatePinnedToCore(Task_testMagSensor, "Task_Test_Mag_Sensor", 4096, NULL, 1, NULL, 1);
-    xTaskCreatePinnedToCore(Task_testLCD, "Task_Test_LCD", 4096, NULL, 1, NULL, 0);
+    xTaskCreatePinnedToCore(Task_ReadSensor, "Task_ReadSensor", 4096, NULL, 1, NULL, 1);
+    xTaskCreatePinnedToCore(Task_Display, "Task_Display", 4096, NULL, 1, NULL, 0);
 }
 
 void loop() {
@@ -67,7 +77,7 @@ void loop() {
 
 /*----------------------------------------FUNC DEFINE--------------------------------------------------*/
 void convertData(void){
-    snprintf(buffer, 100, "%.6f;%.6f;%.6f;%.6f;%.6f;%.6f", Magx, Magy, Magz, Ax, Ay, Az);
+  snprintf(buffer, 100, "%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f", Magx, Magy, Magz, Ax, Ay, Az, lat, lng);
 }
 void displayNum(float num, int8_t x, int8_t y) 
 {
@@ -108,7 +118,7 @@ void displaySensorDetails(void)
 
 
 // Task hiển thị trên OLED
-void Task_testLCD(void* pvParameters) {    
+void Task_Display(void* pvParameters) {    
     TickType_t xLastWakeTime = xTaskGetTickCount();
 #ifdef LCD
     setupLCD();
@@ -149,10 +159,10 @@ void Task_testLCD(void* pvParameters) {
     }
 }
 
-void Task_testMagSensor(void* pvParameters)
+void Task_ReadSensor(void* pvParameters)
 {
     TickType_t xLastWakeTime = xTaskGetTickCount();
-    setupMagSensor();
+    // setupMagSensor();
     sensors_event_t eventMag;
     sensors_event_t eventAccel;    
     timestamp = 0;
@@ -167,7 +177,14 @@ void Task_testMagSensor(void* pvParameters)
             Magz = eventMag.magnetic.z;                        
             Ax = eventAccel.acceleration.x;
             Ay = eventAccel.acceleration.y;
-            Az = eventAccel.acceleration.z;        
+            Az = eventAccel.acceleration.z;       
+            
+            if(hardware.available() > 0){             
+              gps.encode(hardware.read());              
+              lat = gps.location.lat();
+              lng = gps.location.lng();
+            }
+
             
             convertData();
             timestamp = millis();
@@ -177,3 +194,4 @@ void Task_testMagSensor(void* pvParameters)
         /* Delay before the next sample */        
     }
 }
+
