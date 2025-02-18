@@ -14,6 +14,10 @@ Adafruit_LSM303_Accel_Unified accel = Adafruit_LSM303_Accel_Unified(12345);
 #define SDA 21
 #define SCK 22
 
+// CONFIG
+#undef LCD 
+#define _SERIAL 1
+
 float Magx = 0;
 float Magy = 0;
 float Magz = 0;
@@ -21,6 +25,9 @@ float Magz = 0;
 float Ax = 0;
 float Ay = 0;
 float Az = 0;
+
+uint32_t timestamp_Mag = 0;
+uint32_t timestamp_Accel = 0;
 
 
 xSemaphoreHandle xMutex;
@@ -94,31 +101,26 @@ void setupLCD(void)
 void displaySensorDetails(void)
 {
   sensor_t sensor;
-  mag.getSensor(&sensor);
-  Serial.println("------------------------------------");
-  Serial.print  ("Sensor:       "); Serial.println(sensor.name);
-  Serial.print  ("Driver Ver:   "); Serial.println(sensor.version);
-  Serial.print  ("Unique ID:    "); Serial.println(sensor.sensor_id);
-  Serial.print  ("Max Value:    "); Serial.print(sensor.max_value); Serial.println(" m/s^2");
-  Serial.print  ("Min Value:    "); Serial.print(sensor.min_value); Serial.println(" m/s^2");
-  Serial.print  ("Resolution:   "); Serial.print(sensor.resolution); Serial.println(" m/s^2");
-  Serial.println("------------------------------------");
-  Serial.println("");
   vTaskDelay(500);
 }
 
 
 // Task hiển thị trên OLED
 void Task_testLCD(void* pvParameters) {
+#ifdef LCD
     setupLCD();
     u8g2.setFont(u8g2_font_ncenB08_tr); 
-    u8g2.drawStr(10, 10, "ESP32 Test");
+    // u8g2.drawStr(10, 10, "ESP32 Test");
     u8g2.drawStr(10, 30, "X:");
     u8g2.drawStr(10, 45, "Y:");
     u8g2.drawStr(10, 60, "Z:");
     u8g2.sendBuffer();        
+#endif
     while (1) {                        
         if(xSemaphoreTake(xMutex, portMAX_DELAY)){            
+            // displayNum(timestamp_Accel, 25, 10);
+            // displayNum(timestamp_Mag, 65, 10);            
+#ifdef LCD
             displayNum(Magx, 25, 30);
             displayNum(Magy, 25, 45);
             displayNum(Magz, 25, 60);
@@ -126,10 +128,19 @@ void Task_testLCD(void* pvParameters) {
             displayNum(Ay, 65, 45);
             displayNum(Az, 65, 60);            
             u8g2.sendBuffer();                
+#endif
+#ifdef _SERIAL        
+        Serial.print(timestamp_Accel); Serial.print("| Accel__X: "); Serial.print(Ax);
+        Serial.print(" Accel__Y: "); Serial.print(Ay); Serial.print(" Accel__Z: "); Serial.println(Az);        
+        Serial.print(timestamp_Mag); Serial.print("| Mag__X: "); Serial.print(Magx);
+        Serial.print(" Mag__Y: "); Serial.print(Magy); Serial.print(" Mag__Z: "); Serial.println(Magz);        
+        
+#endif
+            
             xSemaphoreGive(xMutex);
         }           
         // Dùng pdMS_TO_TICKS() để delay đúng thời gian
-        vTaskDelay(100);
+        vTaskDelay(500);
     }
 }
 
@@ -147,6 +158,9 @@ void Task_testMagSensor(void* pvParameters)
         if(xSemaphoreTake(xMutex, portMAX_DELAY)){
             accel.getEvent(&eventAccel);
             mag.getEvent(&eventMag);
+
+            timestamp_Accel = eventAccel.timestamp;
+            timestamp_Mag = eventMag.timestamp;
             
             Magx = eventMag.magnetic.x;
             Magy = eventMag.magnetic.y;
@@ -156,11 +170,8 @@ void Task_testMagSensor(void* pvParameters)
             Az = eventAccel.acceleration.z;
 
             xSemaphoreGive(xMutex);
-        }        
-        // Serial.print("__X: "); Serial.print(x); Serial.print("  ");
-        // Serial.print("__Y: "); Serial.print(y); Serial.print("  ");
-        // Serial.print("__Z: "); Serial.print(z); Serial.print("  ");Serial.println("Gauss ");
+        }                
         /* Delay before the next sample */
-        vTaskDelay(100);
+        vTaskDelay(500);
     }
 }
