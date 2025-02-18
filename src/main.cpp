@@ -18,17 +18,16 @@ Adafruit_LSM303_Accel_Unified accel = Adafruit_LSM303_Accel_Unified(12345);
 #undef LCD 
 #define _SERIAL 1
 
+#define FREQENCE 1
+
+// Sensor
 float Magx = 0;
 float Magy = 0;
 float Magz = 0;
-
 float Ax = 0;
 float Ay = 0;
 float Az = 0;
-
-uint32_t timestamp_Mag = 0;
-uint32_t timestamp_Accel = 0;
-
+uint32_t timestamp = 0;
 
 xSemaphoreHandle xMutex;
 
@@ -45,6 +44,7 @@ void setupMagSensor(void);
 void Task_testLCD(void* pvParameters);
 void Task_testMagSensor(void* pvParameters);
 
+
 void setup() {
     Serial.begin(SERIAL_BAUDRATE);   
     xMutex = xSemaphoreCreateBinary();
@@ -56,7 +56,7 @@ void setup() {
 
     // Tăng stack lên 4096 tránh lỗi reset
     xTaskCreatePinnedToCore(Task_testMagSensor, "Task_Test_Mag_Sensor", 10000, NULL, 1, NULL, 1);
-    xTaskCreatePinnedToCore(Task_testLCD, "Task_Test_LCD", 10000, NULL, 2, NULL, 0);
+    xTaskCreatePinnedToCore(Task_testLCD, "Task_Test_LCD", 10000, NULL, 1, NULL, 0);
 }
 
 void loop() {
@@ -82,8 +82,7 @@ void setupMagSensor(void)
 {
     if(!mag.begin() || !accel.begin())
     {
-        /* There was a problem detecting the ADXL345 ... check your connections */
-        // Serial.println("Ooops, no LSM303 detected ... Check your wiring!");
+        /* There was a problem detecting the ADXL345 ... check your connections */        
         while(1);
     }
 
@@ -106,14 +105,15 @@ void displaySensorDetails(void)
 
 
 // Task hiển thị trên OLED
-void Task_testLCD(void* pvParameters) {
+void Task_testLCD(void* pvParameters) {    
+    TickType_t xLastWakeTime = xTaskGetTickCount();
 #ifdef LCD
     setupLCD();
     u8g2.setFont(u8g2_font_ncenB08_tr); 
     // u8g2.drawStr(10, 10, "ESP32 Test");
     u8g2.drawStr(10, 30, "X:");
     u8g2.drawStr(10, 45, "Y:");
-    u8g2.drawStr(10, 60, "Z:");
+    u8g2 .drawStr(10, 60, "Z:");
     u8g2.sendBuffer();        
 #endif
     while (1) {                        
@@ -130,48 +130,41 @@ void Task_testLCD(void* pvParameters) {
             u8g2.sendBuffer();                
 #endif
 #ifdef _SERIAL        
-        Serial.print(timestamp_Accel); Serial.print("| Accel__X: "); Serial.print(Ax);
-        Serial.print(" Accel__Y: "); Serial.print(Ay); Serial.print(" Accel__Z: "); Serial.println(Az);        
-        Serial.print(timestamp_Mag); Serial.print("| Mag__X: "); Serial.print(Magx);
-        Serial.print(" Mag__Y: "); Serial.print(Magy); Serial.print(" Mag__Z: "); Serial.println(Magz);        
-        
-#endif
-            
+            Serial.print(timestamp); Serial.print("| Accel__X: "); Serial.print(Ax);
+            Serial.print(" Accel__Y: "); Serial.print(Ay); Serial.print(" Accel__Z: "); Serial.println(Az);        
+            Serial.print(timestamp); Serial.print("| Mag__X: "); Serial.print(Magx);
+            Serial.print(" Mag__Y: "); Serial.print(Magy); Serial.print(" Mag__Z: "); Serial.println(Magz);                
+#endif            
             xSemaphoreGive(xMutex);
         }           
         // Dùng pdMS_TO_TICKS() để delay đúng thời gian
-        vTaskDelay(500);
+        vTaskDelayUntil(&xLastWakeTime, 500);
     }
 }
 
 void Task_testMagSensor(void* pvParameters)
 {
+    TickType_t xLastWakeTime = xTaskGetTickCount();
     setupMagSensor();
     sensors_event_t eventMag;
-    sensors_event_t eventAccel;
+    sensors_event_t eventAccel;    
 
     while(1){                
-        /* Display the results (acceleration is measured in m/s^2) */
-        //   Serial.print("X: "); Serial.print(event.acceleration.x); Serial.print("  ");
-        //   Serial.print("Y: "); Serial.print(event.acceleration.y); Serial.print("  ");
-        //   Serial.print("Z: "); Serial.print(event.acceleration.z); Serial.print("  ");Serial.println("m/s^2 ");
+        /* Display the results (acceleration is measured in m/s^2) */                
         if(xSemaphoreTake(xMutex, portMAX_DELAY)){
             accel.getEvent(&eventAccel);
-            mag.getEvent(&eventMag);
-
-            timestamp_Accel = eventAccel.timestamp;
-            timestamp_Mag = eventMag.timestamp;
+            mag.getEvent(&eventMag);            
             
             Magx = eventMag.magnetic.x;
             Magy = eventMag.magnetic.y;
             Magz = eventMag.magnetic.z;                        
             Ax = eventAccel.acceleration.x;
             Ay = eventAccel.acceleration.y;
-            Az = eventAccel.acceleration.z;
-
-            xSemaphoreGive(xMutex);
-        }                
-        /* Delay before the next sample */
-        vTaskDelay(500);
+            Az = eventAccel.acceleration.z;            
+            timestamp = millis();
+            xSemaphoreGive(xMutex);            
+        }                    
+        vTaskDelayUntil(&xLastWakeTime, 500);
+        /* Delay before the next sample */        
     }
 }
