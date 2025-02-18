@@ -4,7 +4,7 @@
 #include <Adafruit_LSM303_U.h>
 #include <U8g2lib.h>
 
-#define SERIAL_BAUDRATE 115200
+#define SERIAL_BAUDRATE 9600
 
 // Khai báo màn hình OLED SH1106 (I2C)
 U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
@@ -27,6 +27,8 @@ float Magz = 0;
 float Ax = 0;
 float Ay = 0;
 float Az = 0;
+
+char buffer[100];
 uint32_t timestamp = 0;
 
 xSemaphoreHandle xMutex;
@@ -38,7 +40,7 @@ void displayNum(float num, int8_t x, int8_t y);
 void displaySensorDetails(void);
 void setupLCD(void);
 void setupMagSensor(void);
-
+void convertData(void);
 
 // Task define 
 void Task_testLCD(void* pvParameters);
@@ -55,8 +57,8 @@ void setup() {
    
 
     // Tăng stack lên 4096 tránh lỗi reset
-    xTaskCreatePinnedToCore(Task_testMagSensor, "Task_Test_Mag_Sensor", 10000, NULL, 1, NULL, 1);
-    xTaskCreatePinnedToCore(Task_testLCD, "Task_Test_LCD", 10000, NULL, 1, NULL, 0);
+    xTaskCreatePinnedToCore(Task_testMagSensor, "Task_Test_Mag_Sensor", 4096, NULL, 1, NULL, 1);
+    xTaskCreatePinnedToCore(Task_testLCD, "Task_Test_LCD", 4096, NULL, 1, NULL, 0);
 }
 
 void loop() {
@@ -64,15 +66,16 @@ void loop() {
 }
 
 /*----------------------------------------FUNC DEFINE--------------------------------------------------*/
+void convertData(void){
+    snprintf(buffer, 100, "%.6f;%.6f;%.6f;%.6f;%.6f;%.6f", Magx, Magy, Magz, Ax, Ay, Az);
+}
 void displayNum(float num, int8_t x, int8_t y) 
 {
     char buffer[10];  
     dtostrf(num, 6, 2, buffer);  
-
     
     u8g2.setDrawColor(0);
     u8g2.drawBox(x, y - 10, 50, 12);
-
     
     u8g2.setDrawColor(1);
     u8g2.drawStr(x, y, buffer);
@@ -130,10 +133,14 @@ void Task_testLCD(void* pvParameters) {
             u8g2.sendBuffer();                
 #endif
 #ifdef _SERIAL        
+#ifdef TIMESTAMP_DEBUG
             Serial.print(timestamp); Serial.print("| Accel__X: "); Serial.print(Ax);
             Serial.print(" Accel__Y: "); Serial.print(Ay); Serial.print(" Accel__Z: "); Serial.println(Az);        
             Serial.print(timestamp); Serial.print("| Mag__X: "); Serial.print(Magx);
             Serial.print(" Mag__Y: "); Serial.print(Magy); Serial.print(" Mag__Z: "); Serial.println(Magz);                
+#else
+            Serial.println(buffer);
+#endif
 #endif            
             xSemaphoreGive(xMutex);
         }           
@@ -148,7 +155,7 @@ void Task_testMagSensor(void* pvParameters)
     setupMagSensor();
     sensors_event_t eventMag;
     sensors_event_t eventAccel;    
-
+    timestamp = 0;
     while(1){                
         /* Display the results (acceleration is measured in m/s^2) */                
         if(xSemaphoreTake(xMutex, portMAX_DELAY)){
@@ -160,7 +167,9 @@ void Task_testMagSensor(void* pvParameters)
             Magz = eventMag.magnetic.z;                        
             Ax = eventAccel.acceleration.x;
             Ay = eventAccel.acceleration.y;
-            Az = eventAccel.acceleration.z;            
+            Az = eventAccel.acceleration.z;        
+            
+            convertData();
             timestamp = millis();
             xSemaphoreGive(xMutex);            
         }                    
