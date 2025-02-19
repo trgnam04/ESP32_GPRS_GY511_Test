@@ -16,7 +16,6 @@
 // WiFiClient wifi;
 // HttpClient http(wifi);
 
-
 // {
 //   sensor_t sensor;
 //   mag.getSensor(&sensor);
@@ -68,7 +67,7 @@
 // int http_get(const char * hostname, const char * path, char * data, char * retData, int * retDataSize){
 //   int err = 0;
 //   *retDataSize = 0;
-//   // path processing 
+//   // path processing
 //   char newpath[200];
 //   sprintf(newpath, "%s?stationcode=K13_TEST&data=%s", path, data);
 //   err = http.get(hostname, newpath);
@@ -152,19 +151,17 @@
 //   int retDataSize;
 
 //   int err = http_get(kHostname, kPath, data, retData, &retDataSize);
-  
+
 //   Serial.println(retData);
 //   http.stop();
 
 //   while (1);
 // }
 
-
 #ifdef ESP32
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #endif // ESP32
-
 
 #include <Arduino_MQTT_Client.h>
 #include <Server_Side_RPC.h>
@@ -221,30 +218,33 @@ WiFiClient espClient;
 Arduino_MQTT_Client mqttClient(espClient);
 // Initialize used apis
 Server_Side_RPC<MAX_RPC_SUBSCRIPTIONS, MAX_RPC_RESPONSE> rpc;
-const std::array<IAPI_Implementation*, 1U> apis = {
-    &rpc
-};
+const std::array<IAPI_Implementation *, 1U> apis = {
+    &rpc};
 // Initialize ThingsBoard instance with the maximum needed buffer size
 ThingsBoard tb(mqttClient, MAX_MESSAGE_RECEIVE_SIZE, MAX_MESSAGE_SEND_SIZE, Default_Max_Stack_Size, apis);
 
 // Statuses for subscribing to rpc
 bool subscribed = false;
 
-void InitWiFi() {
+void InitWiFi()
+{
   Serial.println("Connecting to AP ...");
   // Attempting to establish a connection to the given WiFi network
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  while (WiFi.status() != WL_CONNECTED) {
+  while (WiFi.status() != WL_CONNECTED)
+  {
     delay(500);
     Serial.print(".");
   }
   Serial.println("Connected to AP");
 }
 
-bool reconnect() {
+bool reconnect()
+{
   // Check to ensure we aren't connected yet
   const wl_status_t status = WiFi.status();
-  if (status == WL_CONNECTED) {
+  if (status == WL_CONNECTED)
+  {
     return true;
   }
 
@@ -258,7 +258,8 @@ bool reconnect() {
 /// See https://arduinojson.org/v5/api/jsonvariant/subscript/ for more details
 /// @param data Data containing the rpc data that was called and its current value
 /// @param response Data containgin the response value, any number, string or json, that should be sent to the cloud. Useful for getMethods
-void processGetJson(const JsonVariantConst &data, JsonDocument &response) {
+void processGetJson(const JsonVariantConst &data, JsonDocument &response)
+{
   Serial.println("Received the json RPC method");
 
   // Size of the response document needs to be configured to the size of the innerDoc + 1.
@@ -270,7 +271,8 @@ void processGetJson(const JsonVariantConst &data, JsonDocument &response) {
   response["json_data"] = innerDoc;
 }
 
-void processTemperatureChange(const JsonVariantConst &data, JsonDocument &response) {
+void processTemperatureChange(const JsonVariantConst &data, JsonDocument &response)
+{
   Serial.println("Received the set temperature RPC method");
 
   // Process data
@@ -288,7 +290,8 @@ void processTemperatureChange(const JsonVariantConst &data, JsonDocument &respon
   response["bool"] = true;
 }
 
-void processSwitchChange(const JsonVariantConst &data, JsonDocument &response) {
+void processSwitchChange(const JsonVariantConst &data, JsonDocument &response)
+{
   Serial.println("Received the set switch method");
 
   // Process data
@@ -298,62 +301,65 @@ void processSwitchChange(const JsonVariantConst &data, JsonDocument &response) {
   response.set(22.02);
 }
 
-void processNeoDefault(const JsonVariantConst &data, JsonDocument &response){
+void processNeoDefault(const JsonVariantConst &data, JsonDocument &response)
+{
   response.set(0);
 }
 
-void setup() {
-  // Initalize serial connection for debugging
+DynamicJsonDocument doc(1024);
+
+void setup()
+{
   Serial.begin(SERIAL_DEBUG_BAUD);
   delay(1000);
   InitWiFi();
 }
 
-void loop() {
-  delay(1000);
-  if (!reconnect()) {
+float lng = 30.12345;
+float lat = 20.12345;
+float magX = 0.123;
+float magY = 0.234;
+float magZ = 0.345;
+float accX = 0.000;
+float accY = 0.000;
+float accZ = 9.801;
+
+void loop()
+{
+
+  if (!reconnect())
+  {
     return;
   }
 
-  if (!tb.connected()) {
-    // Reconnect to the ThingsBoard server,
-    // if a connection was disrupted or has not yet been established
+  if (!tb.connected())
+  {
     Serial.printf("Connecting to: (%s) with token (%s)\n", THINGSBOARD_SERVER, TOKEN);
-    if (!tb.connect(THINGSBOARD_SERVER, TOKEN, THINGSBOARD_PORT)) {
+    if (!tb.connect(THINGSBOARD_SERVER, TOKEN, THINGSBOARD_PORT))
+    {
       Serial.println("Failed to connect");
       return;
     }
-  }
+  };
 
-  if (!subscribed) {
-    Serial.println("Subscribing for RPC...");
-    const std::array<RPC_Callback, MAX_RPC_SUBSCRIPTIONS> callbacks = {
-      // Requires additional memory in the JsonDocument for the JsonDocument that will be copied into the response
-      RPC_Callback{ RPC_JSON_METHOD,           processGetJson },
-      // Requires additional memory in the JsonDocument for 5 key-value pairs that do not copy their value into the JsonDocument itself
-      RPC_Callback{ RPC_TEMPERATURE_METHOD,    processTemperatureChange },
-       // Internal size can be 0, because if we use the JsonDocument as a JsonVariant and then set the value we do not require additional memory
-      RPC_Callback{ RPC_SWITCH_METHOD,         processSwitchChange }
-    };
-    if (!rpc.RPC_Subscribe(callbacks.cbegin(), callbacks.cend())) {
-      Serial.println("Failed to subscribe for RPC");
-      return;
-    }
-
-    Serial.println("Subscribe done");
-    subscribed = true;
-  }
-  float lng = 50.12345;
-  float lat = 20.12345;
-  float magX = 0.123;
-  float magY = 0.234;
-  float magZ = 0.345;
-  float accX = 0.000;
-  float accY = 0.000;
-  float accZ = 9.801;
-  DynamicJsonDocument doc(1024);
-  doc[String("lng")] = lng;
-  
-  tb.sendTelemetryJson(doc, 1024);
+  lng += 1;
+  lat += 1;
+  magX += 1;
+  magY += 1;
+  magZ += 1;
+  accX += 1;
+  accY += 1;
+  accZ += 1;
+  doc["lng"] = lng;
+  doc["lat"] = lng;
+  doc["magX"] = magX;
+  doc["magY"] = magY;
+  doc["magZ"] = magZ;
+  doc["accX"] = accX;
+  doc["accY"] = accY;
+  doc["accZ"] = accZ;
+  size_t size = Helper::Measure_Json(doc);
+  tb.sendTelemetryJson(doc, size);
   tb.loop();
+  delay(1000);
 }
