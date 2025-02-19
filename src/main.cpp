@@ -311,21 +311,17 @@ void Task_CheckConnection(void* pvParameters)
 {
     TickType_t xLastWakeTime = xTaskGetTickCount();
     while(1){
-        if (!tb.connected()) {
+        if (!tb.connected()) {            
             // Reconnect to the ThingsBoard server,
             // if a connection was disrupted or has not yet been established
             Serial.printf("Connecting to: (%s) with token (%s)\n", THINGSBOARD_SERVER, TOKEN);
-            if (!tb.connect(THINGSBOARD_SERVER, TOKEN, THINGSBOARD_PORT)) {          
+            if (!tb.connect(THINGSBOARD_SERVER, TOKEN, THINGSBOARD_PORT)) {                          
                 Serial.println("Failed to connect");                
             }
             else{
                 Serial.println("Connected");
             }
-        }        
-        else{
-            Serial.println("Connection Abort");
-            Serial.println("Reconnect to Server");
-        }
+        }                
         
         tb.loop();
         vTaskDelayUntil(&xLastWakeTime, 1000);
