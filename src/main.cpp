@@ -1,3 +1,5 @@
+#define CORE_DEBUG_LEVEL 5
+
 #include <TinyGPSPlus.h>
 #include <Arduino.h>
 #include <Wire.h>
@@ -99,14 +101,18 @@ DynamicJsonDocument data(256);
 size_t data_size;
 uint32_t timestamp = 0;
 
-xSemaphoreHandle xMutex;
-
 // Supported for Display
 void displayNum(float num, int8_t x, int8_t y);
 void updateValues(void);
 void displaySubPage2(void);
 void drawArrowSelect(uint8_t state);
 void drawStaticMenu(void);
+void updateValues(void);
+void testDisplay(void);
+
+void display_process_fsm(void);
+void menu_process_fsm(void);
+void setting_process_fsm(void);
 
 
 // Supported for Wifi
@@ -125,6 +131,7 @@ void Task_ReadSensor(void* pvParameters);
 void Task_SendData(void* pvParameters);
 void Task_CheckConnection(void* pvParameters);
 void Task_MenuProcess(void* pvParameters);
+void Task_ReadRotaryEncoder(void* pvParameters);
 
 // Display Page
 void Menu(void);
@@ -133,49 +140,53 @@ void Page2(void); // Mag
 void Page3(void); // GPS
 
 typedef enum{
-    IDLE_MENU
+    STATE_IDLE_MENU,
+    STATE_SETTING,
+    STATE_MEASURING
 } menu_state_t;
 
-menu_state_t MenuState = IDLE_MENU;
-
 typedef enum{
-    IDLE,
-    PAGE1,
-    PAGE2,
-    PAGE3
+    STATE_IDLE_DISPLAY,
+    STATE_DISPLAY_PAGE1,
+    STATE_DISPLAY_PAGE2    
 } display_state_t ;
 
-display_state_t DisplayState = IDLE;
+typedef enum{
+    STATE_IDLE_SETTING,
+    STATE_TRIPNUMBER_SETTING,
+    STATE_ROUTEID_SETTING
+} setting_state_t;
+
+setting_state_t SettingState = STATE_IDLE_SETTING;
+display_state_t DisplayState = STATE_IDLE_DISPLAY;
+menu_state_t MenuState = STATE_IDLE_MENU;
+
 int tripNumber = 0;
 int routeID = 0;
 
 
 
 void setup() {
-    Serial.begin(SERIAL_BAUDRATE);   
-    xMutex = xSemaphoreCreateBinary();
-    if(xMutex != NULL){
-        xSemaphoreGive(xMutex);
-    }
+    Serial.begin(SERIAL_BAUDRATE);       
     Wire.begin(SDA, SCK);
-    hardware.begin(9600);
-
-    RotaryEncoder_setup();
+    hardware.begin(9600);    
     delay(1000);
     
     InitWiFi();
    
 
     // Tăng stack lên 4096 tránh lỗi reset
-    xTaskCreatePinnedToCore(Task_ReadSensor, "Task_ReadSensor", 4096, NULL, 1, NULL, 1);
+    xTaskCreatePinnedToCore(Task_ReadSensor, "Task_ReadSensor", 4096, NULL, 2, NULL, 0);
     // xTaskCreatePinnedToCore(Task_Display, "Task_Display", 4096, NULL, 1, NULL, 0);
-    xTaskCreatePinnedToCore(Task_SendData, "Task_SendData", 4096, NULL, 2, NULL, 0);
+    xTaskCreatePinnedToCore(Task_SendData, "Task_SendData", 4096, NULL, 3, NULL, 0);
     xTaskCreatePinnedToCore(Task_CheckConnection, "Task_CheckConnection", 4096, NULL, 1, NULL, 0);
-    xTaskCreatePinnedToCore(Task_MenuProcess, "Task_MenuProcess", 4096, NULL, 2, NULL, 0);
+    xTaskCreatePinnedToCore(Task_MenuProcess, "Task_MenuProcess", 4096, NULL, 4, NULL, 0);
+    xTaskCreatePinnedToCore(Task_ReadRotaryEncoder, "Task_ReadRotary", 4096, NULL, 5, NULL, 0);
 }
 
 void loop() {
     // Không làm gì trong loop vì đang chạy RTOS
+    vTaskDelay(portMAX_DELAY);
 }
 
 /*----------------------------------------FUNC DEFINE--------------------------------------------------*/
@@ -243,69 +254,9 @@ void setupMagSensor(void)
     {
         /* There was a problem detecting the ADXL345 ... check your connections */        
         while(1);
-    }
-
-    /* Display some basic information on this sensor */
-    displaySensorDetails();
+    }    
 
 }
-
-// Hàm khởi tạo OLED
-void setupLCD(void) 
-{   
-    u8g2.begin();
-}
-
-void displaySensorDetails(void)
-{
-  sensor_t sensor;
-  vTaskDelay(500);
-}
-
-
-// Task hiển thị trên OLED
-void Task_Display(void* pvParameters) {    
-    TickType_t xLastWakeTime = xTaskGetTickCount();    
-#ifdef LCD
-    setupLCD();
-    u8g2.setFont(u8g2_font_ncenB08_tr); 
-    // u8g2.drawStr(10, 10, "ESP32 Test");
-    u8g2.drawStr(10, 30, "X:");
-    u8g2.drawStr(10, 45, "Y:");
-    u8g2 .drawStr(10, 60, "Z:");
-    u8g2.sendBuffer();        
-#endif
-    while (1) {                      
-          
-        if(xSemaphoreTake(xMutex, portMAX_DELAY)){            
-            // displayNum(timestamp_Accel, 25, 10);
-            // displayNum(timestamp_Mag, 65, 10);            
-#ifdef LCD
-            displayNum(Magx, 25, 30);
-            displayNum(Magy, 25, 45);
-            displayNum(Magz, 25, 60);
-            displayNum(Ax, 65, 30);
-            displayNum(Ay, 65, 45);
-            displayNum(Az, 65, 60);            
-            u8g2.sendBuffer();                
-#endif
-#ifdef _SERIAL        
-#ifdef TIMESTAMP_DEBUG
-            Serial.print(timestamp); Serial.print("| Accel__X: "); Serial.print(Ax);
-            Serial.print(" Accel__Y: "); Serial.print(Ay); Serial.print(" Accel__Z: "); Serial.println(Az);        
-            Serial.print(timestamp); Serial.print("| Mag__X: "); Serial.print(Magx);
-            Serial.print(" Mag__Y: "); Serial.print(Magy); Serial.print(" Mag__Z: "); Serial.println(Magz);                
-#else
-            Serial.println(buffer);
-#endif
-#endif            
-            xSemaphoreGive(xMutex);
-        }           
-        // Dùng pdMS_TO_TICKS() để delay đúng thời gian
-        vTaskDelayUntil(&xLastWakeTime, 500);
-    }
-}
-
 
 void drawStaticMenu(void){
     u8g2.clearBuffer();    
@@ -326,7 +277,7 @@ void drawArrowSelect(uint8_t state){
   u8g2.sendBuffer();
 }
 
-void displaySubPage2(void){    
+void displaySubPage(uint8_t idx){    
     int rowHeight = 11;   // Chiều cao mỗi hàng (để cân đối)
     int paramWidth = 30;  // Chiều rộng cột "Param" (Nhỏ hơn)
     int valueWidth = 80;  // Chiều rộng cột "Value" (Lớn hơn)
@@ -340,8 +291,26 @@ void displaySubPage2(void){
     u8g2.setFont(u8g2_font_6x10_tf);    
     u8g2.drawStr(startX + 5, startY - 2, "P");  // Cột 1 (Param nhỏ gọn)
     u8g2.drawStr(startX + paramWidth + 5, startY - 2, "Value");  // Cột 2
-      
-    const char* params[] = {"ax", "ay", "az", "lat", "lng"};
+    const char* params[5];
+    switch(idx){
+        case 1:{
+            params[0] = "ax";
+            params[1] = "ay";
+            params[2] = "az";        
+            params[3] = "tID";
+            params[4] = "rID";
+            break;
+        }
+        case 2:{
+            params[0] = "mx";
+            params[1] = "my";
+            params[2] = "mz";        
+            params[3] = "lat";
+            params[4] = "lng";
+            break;
+        }
+    }
+    
     const char* values[] = {"1.23", "-0.98", "0.50", "10.1234", "106.5678"};
   
     for (int i = 0; i < 5; i++) {
@@ -367,6 +336,170 @@ void updateValues() {
     u8g2.sendBuffer();
 }
 
+uint8_t state = 3;
+
+void flushData(void){
+    tripNumber = 0;
+    routeID = 0;
+    u8g2.clearBuffer();
+}
+
+void testDisplay(void){
+    switch(state){
+        case 3:{
+            if(1){
+                drawArrowSelect(1);
+                state = 1;
+            }
+            break;
+        }
+        case 1:{
+            if(isDecrease()){
+                if(tripNumber >= 0){
+                    tripNumber--;
+                }                
+                break;    
+            }
+            if(isIncrease()){                
+                tripNumber++;
+                break;
+            }
+            if(isPressed()){                
+                drawArrowSelect(0);
+                state = 0;
+            }
+            break;
+        }
+        case 0:{
+            if(isDecrease()){            
+                routeID--;
+                break;
+            }
+            if(isIncrease()){                
+                routeID++;
+                break;
+            }
+            if(isPressed()){                
+                drawArrowSelect(1);
+                state = 1;
+            }
+            break;
+        }
+    }        
+    updateValues();
+    RotaryEncoder_loop();        
+}
+
+void setting_process_fsm(void){
+    switch(SettingState){
+        case STATE_IDLE_SETTING:{
+            if(1){
+                drawArrowSelect(1);
+                SettingState = STATE_TRIPNUMBER_SETTING;
+            }
+            break;
+        }
+        case STATE_TRIPNUMBER_SETTING:{
+            if(isDecrease()){                
+                if(tripNumber > 0){
+                    tripNumber--;
+                }                                            
+            }
+            if(isIncrease()){                
+                tripNumber++;                
+            }
+            if(isPressed()){                
+                drawArrowSelect(0);
+                SettingState = STATE_ROUTEID_SETTING;
+            }
+            break;
+        }
+        case STATE_ROUTEID_SETTING:{
+            if(isDecrease()){            
+                if(routeID > 0){
+                    routeID--;
+                }                
+            }
+            if(isIncrease()){                
+                routeID++;                
+            }
+            if(isPressed()){                
+                drawArrowSelect(1);
+                SettingState = STATE_IDLE_SETTING;
+            }
+            break;
+        }
+    }        
+    updateValues();
+}
+
+void menu_process_fsm(void){
+    switch(MenuState){
+        case STATE_IDLE_MENU:{
+            if(1){
+                drawStaticMenu();
+                MenuState = STATE_SETTING;
+            }
+            break;
+        }
+        case STATE_SETTING:{
+            setting_process_fsm();
+            if(isLongPressed()){
+                SettingState = STATE_IDLE_SETTING;
+                flushData();
+                resetRotaryEncoder();
+                MenuState = STATE_MEASURING;
+            }
+            break;
+        }
+        case STATE_MEASURING:{
+            display_process_fsm();
+            if(isLongPressed()){
+                flushData();                
+                resetRotaryEncoder();
+                MenuState = STATE_IDLE_MENU;
+            }
+            break;
+        }
+    }
+}
+
+uint16_t screen_tick = 0;
+uint16_t display_tick = 500;
+
+void display_process_fsm(void){
+    screen_tick = (screen_tick + 1) % display_tick;
+    switch(DisplayState){
+        case STATE_IDLE_DISPLAY:{
+            if(1){
+                DisplayState = STATE_DISPLAY_PAGE1;
+            }
+            break;
+        }
+        case STATE_DISPLAY_PAGE1:{            
+            displaySubPage(1);            
+            if(!screen_tick){
+                u8g2.clearBuffer();    
+                DisplayState = STATE_DISPLAY_PAGE2;
+            }            
+            break;
+        }
+        case STATE_DISPLAY_PAGE2:{
+            displaySubPage(2);
+            if(!screen_tick){
+                u8g2.clearBuffer();    
+                DisplayState = STATE_DISPLAY_PAGE1;
+            }            
+            break;
+        }
+    }
+
+}
+
+
+
+/*---------------------------------------------- Define task -------------------------------------------------*/
+
 
 void Task_ReadSensor(void* pvParameters)
 {
@@ -376,32 +509,29 @@ void Task_ReadSensor(void* pvParameters)
     sensors_event_t eventAccel;    
     timestamp = 0;
     while(1){                
-        /* Display the results (acceleration is measured in m/s^2) */                
-        if(xSemaphoreTake(xMutex, portMAX_DELAY)){
-            accel.getEvent(&eventAccel);
-            mag.getEvent(&eventMag);            
-            
-            Sensor_Data.trip_number = tripNumber;
-            Sensor_Data.routeID = routeID;
-            
-            Sensor_Data.Magx = eventMag.magnetic.x;
-            Sensor_Data.Magy = eventMag.magnetic.y;
-            Sensor_Data.Magz = eventMag.magnetic.z;                        
-            Sensor_Data.Ax = eventAccel.acceleration.x;
-            Sensor_Data.Ay = eventAccel.acceleration.y;
-            Sensor_Data.Az = eventAccel.acceleration.z;       
-            
-            if(hardware.available() > 0){             
-              gps.encode(hardware.read());              
-              Sensor_Data.lat = gps.location.lat();
-              Sensor_Data.lng = gps.location.lng();
-            }
+        /* Display the results (acceleration is measured in m/s^2) */                        
+        accel.getEvent(&eventAccel);
+        mag.getEvent(&eventMag);            
+        
+        Sensor_Data.trip_number = tripNumber;
+        Sensor_Data.routeID = routeID;
+        
+        Sensor_Data.Magx = eventMag.magnetic.x;
+        Sensor_Data.Magy = eventMag.magnetic.y;
+        Sensor_Data.Magz = eventMag.magnetic.z;                        
+        Sensor_Data.Ax = eventAccel.acceleration.x;
+        Sensor_Data.Ay = eventAccel.acceleration.y;
+        Sensor_Data.Az = eventAccel.acceleration.z;       
+        
+        if(hardware.available() > 0){             
+            gps.encode(hardware.read());              
+            Sensor_Data.lat = gps.location.lat();
+            Sensor_Data.lng = gps.location.lng();
+        }
 
-            
-            convertData();
-            timestamp = millis();
-            xSemaphoreGive(xMutex);            
-        }                    
+        
+        convertData();
+        timestamp = millis();        
         vTaskDelayUntil(&xLastWakeTime, 500);
         /* Delay before the next sample */        
     }
@@ -440,11 +570,19 @@ void Task_CheckConnection(void* pvParameters)
 
 void Task_MenuProcess(void* pvParameters)
 {
-    while(1){
-        RotaryEncoder_loop();
-
+    u8g2.begin();
+    drawStaticMenu();    
+    while(1){        
+        menu_process_fsm();        
         vTaskDelay(5);
     }
 }
 
-
+void Task_ReadRotaryEncoder(void* pvParameters){
+    RotaryEncoder_setup();
+    while(1){        
+        // menu_process_fsm();
+        RotaryEncoder_loop();
+        vTaskDelay(TIME_READ);
+    }
+}

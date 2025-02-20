@@ -76,7 +76,7 @@ void RotaryEncoder_loop()
         }
     }
 }
-int isPressed()
+bool isPressed()
 {
     if (swPressFlag)
     {
@@ -85,7 +85,7 @@ int isPressed()
     }
     return 0;
 }
-int isLongPressed()
+bool isLongPressed()
 {
     if (swLongPressFlag)
     {
@@ -95,7 +95,7 @@ int isLongPressed()
     return 0;
 
 }
-int isIncrese()
+bool isIncrease()
 {
     if (clockwiseFlag)
     {
@@ -105,7 +105,7 @@ int isIncrese()
     return 0;
 
 }
-int isDecrease()
+bool isDecrease()
 {
     if (counterClockwiseFlag)
     {
@@ -114,4 +114,12 @@ int isDecrease()
     }
     return 0;
 
+}
+
+void resetRotaryEncoder()
+{
+    swPressFlag = 0;
+    swLongPressFlag = 0;
+    clockwiseFlag = 0;
+    counterClockwiseFlag = 0;
 }
