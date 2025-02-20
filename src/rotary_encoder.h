@@ -20,6 +20,7 @@ int isPressed();
 int isLongPressed();
 int isIncrese();
 int isDecrease();
+void resetRotaryEncoder();
 
 
 

@@ -121,3 +121,10 @@ int isDecrease()
     return 0;
 
 }
+void resetRotaryEncoder()
+{
+    swPressFlag = 0;
+    swLongPressFlag = 0;
+    clockwiseFlag = 0;
+    counterClockwiseFlag = 0;
+}
