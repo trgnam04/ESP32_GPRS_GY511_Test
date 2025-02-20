@@ -8,6 +8,7 @@
 #include <Arduino_MQTT_Client.h>
 #include <WiFi.h>
 #include <Server_Side_RPC.h>
+#include <rotary_encoder.h>
 
 #define SERIAL_BAUDRATE 9600
 #define TX_PIN 17
@@ -74,15 +75,20 @@ bool subscribed = false;
 
 
 // Sensor
-float Magx = 0;
-float Magy = 0;
-float Magz = 0;
-float Ax = 0;
-float Ay = 0;
-float Az = 0;
+typedef struct{
+    float Magx = 0;
+    float Magy = 0;
+    float Magz = 0;
+    float Ax = 0;
+    float Ay = 0;
+    float Az = 0;
+    double lat = 0;
+    double lng = 0;    
+    uint16_t trip_num = 0;
+    uint16_t routeID = 0;
+} sensor_data_t;
 
-double lat = 0;
-double lng = 0;
+sensor_data_t Sensor_Data;
 
 
 char buffer[100];
@@ -111,7 +117,7 @@ void Task_Display(void* pvParameters);
 void Task_ReadSensor(void* pvParameters);
 void Task_SendData(void* pvParameters);
 void Task_CheckConnection(void* pvParameters);
-void Task_DisplayPage(void* pvParameters);
+void Task_MenuProcess(void* pvParameters);
 
 // Display Page
 void Menu(void);
@@ -144,7 +150,10 @@ void setup() {
     }
     Wire.begin(SDA, SCK);
     hardware.begin(9600);
+
+    RotaryEncoder_setup();
     delay(1000);
+    
     InitWiFi();
    
 
@@ -153,6 +162,7 @@ void setup() {
     // xTaskCreatePinnedToCore(Task_Display, "Task_Display", 4096, NULL, 1, NULL, 0);
     xTaskCreatePinnedToCore(Task_SendData, "Task_SendData", 4096, NULL, 2, NULL, 0);
     xTaskCreatePinnedToCore(Task_CheckConnection, "Task_CheckConnection", 4096, NULL, 1, NULL, 0);
+    xTaskCreatePinnedToCore(Task_MenuProcess, "Task_MenuProcess", 4096, NULL, 2, NULL, 0);
 }
 
 void loop() {
@@ -190,14 +200,14 @@ void convertData(void){
   snprintf(buffer, 100, "%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f", Magx, Magy, Magz, Ax, Ay, Az, lat, lng);
 #endif
 #ifdef MQTT
-    data[COLLECTOR_KEY_LNG] = lng;
-    data[COLLECTOR_KEY_LAT] = lat;
-    data[COLLECTOR_KEY_MAG_X] = Magx;
-    data[COLLECTOR_KEY_MAG_Y] = Magy;
-    data[COLLECTOR_KEY_MAG_Z] = Magz;
-    data[COLLECTOR_KEY_ACCEL_X] = Ax;
-    data[COLLECTOR_KEY_ACCEL_Y] = Ay;
-    data[COLLECTOR_KEY_ACCEL_Z] = Az;
+    data[COLLECTOR_KEY_LNG] = Sensor_Data.lng;
+    data[COLLECTOR_KEY_LAT] = Sensor_Data.lat;
+    data[COLLECTOR_KEY_MAG_X] = Sensor_Data.Magx;
+    data[COLLECTOR_KEY_MAG_Y] = Sensor_Data.Magy;
+    data[COLLECTOR_KEY_MAG_Z] = Sensor_Data.Magz;
+    data[COLLECTOR_KEY_ACCEL_X] = Sensor_Data.Ax;
+    data[COLLECTOR_KEY_ACCEL_Y] = Sensor_Data.Ay;
+    data[COLLECTOR_KEY_ACCEL_Z] = Sensor_Data.Az;
     data_size = Helper::Measure_Json(data);    
 #endif
 
@@ -298,17 +308,17 @@ void Task_ReadSensor(void* pvParameters)
             accel.getEvent(&eventAccel);
             mag.getEvent(&eventMag);            
             
-            Magx = eventMag.magnetic.x;
-            Magy = eventMag.magnetic.y;
-            Magz = eventMag.magnetic.z;                        
-            Ax = eventAccel.acceleration.x;
-            Ay = eventAccel.acceleration.y;
-            Az = eventAccel.acceleration.z;       
+            Sensor_Data.Magx = eventMag.magnetic.x;
+            Sensor_Data.Magy = eventMag.magnetic.y;
+            Sensor_Data.Magz = eventMag.magnetic.z;                        
+            Sensor_Data.Ax = eventAccel.acceleration.x;
+            Sensor_Data.Ay = eventAccel.acceleration.y;
+            Sensor_Data.Az = eventAccel.acceleration.z;       
             
             if(hardware.available() > 0){             
               gps.encode(hardware.read());              
-              lat = gps.location.lat();
-              lng = gps.location.lng();
+              Sensor_Data.lat = gps.location.lat();
+              Sensor_Data.lng = gps.location.lng();
             }
 
             
@@ -349,5 +359,14 @@ void Task_CheckConnection(void* pvParameters)
         
         tb.loop();
         vTaskDelayUntil(&xLastWakeTime, 1000);
+    }
+}
+
+void Task_MenuProcess(void* pvParameters)
+{
+    while(1){
+        RotaryEncoder_loop();
+
+        vTaskDelay(5);
     }
 }
