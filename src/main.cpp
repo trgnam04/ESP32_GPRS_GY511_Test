@@ -111,6 +111,29 @@ void Task_Display(void* pvParameters);
 void Task_ReadSensor(void* pvParameters);
 void Task_SendData(void* pvParameters);
 void Task_CheckConnection(void* pvParameters);
+void Task_DisplayPage(void* pvParameters);
+
+// Display Page
+void Menu(void);
+void Page1(void); // Accel
+void Page2(void); // Mag 
+void Page3(void); // GPS
+
+typedef enum{
+    IDLE_MENU
+} menu_state_t;
+
+menu_state_t MenuState = IDLE_MENU;
+
+typedef enum{
+    IDLE,
+    PAGE1,
+    PAGE2,
+    PAGE3
+} display_state_t ;
+
+display_state_t DisplayState = IDLE;
+
 
 
 void setup() {
@@ -221,7 +244,7 @@ void displaySensorDetails(void)
 
 // Task hiển thị trên OLED
 void Task_Display(void* pvParameters) {    
-    TickType_t xLastWakeTime = xTaskGetTickCount();
+    TickType_t xLastWakeTime = xTaskGetTickCount();    
 #ifdef LCD
     setupLCD();
     u8g2.setFont(u8g2_font_ncenB08_tr); 
@@ -231,7 +254,8 @@ void Task_Display(void* pvParameters) {
     u8g2 .drawStr(10, 60, "Z:");
     u8g2.sendBuffer();        
 #endif
-    while (1) {                        
+    while (1) {                      
+          
         if(xSemaphoreTake(xMutex, portMAX_DELAY)){            
             // displayNum(timestamp_Accel, 25, 10);
             // displayNum(timestamp_Mag, 65, 10);            
