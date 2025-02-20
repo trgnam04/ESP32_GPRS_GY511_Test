@@ -29,6 +29,8 @@ constexpr uint16_t MAX_MESSAGE_RECEIVE_SIZE = 256U;
 constexpr uint8_t MAX_RPC_SUBSCRIPTIONS = 2U;
 constexpr uint8_t MAX_RPC_RESPONSE = 2U;
 // set up key
+constexpr char COLLECTOR_KEY_TRIP_NUMBER[] = "Trip-Number";
+constexpr char COLLECTOR_KEY_ROUTE_ID[] = "Route-ID";
 constexpr char COLLECTOR_KEY_LAT[] = "lat";
 constexpr char COLLECTOR_KEY_LNG[] = "lng";
 constexpr char COLLECTOR_KEY_ACCEL_X[] = "accX";
@@ -84,7 +86,7 @@ typedef struct{
     float Az = 0;
     double lat = 0;
     double lng = 0;    
-    uint16_t trip_num = 0;
+    uint16_t trip_number = 0;
     uint16_t routeID = 0;
 } sensor_data_t;
 
@@ -101,6 +103,11 @@ xSemaphoreHandle xMutex;
 
 // Supported for Display
 void displayNum(float num, int8_t x, int8_t y);
+void updateValues(void);
+void displaySubPage2(void);
+void drawArrowSelect(uint8_t state);
+void drawStaticMenu(void);
+
 
 // Supported for Wifi
 void InitWiFi(void);
@@ -139,6 +146,8 @@ typedef enum{
 } display_state_t ;
 
 display_state_t DisplayState = IDLE;
+int tripNumber = 0;
+int routeID = 0;
 
 
 
@@ -199,7 +208,9 @@ void convertData(void){
 #ifdef HTTP
   snprintf(buffer, 100, "%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f", Magx, Magy, Magz, Ax, Ay, Az, lat, lng);
 #endif
-#ifdef MQTT
+#ifdef MQTT    
+    data[COLLECTOR_KEY_TRIP_NUMBER] = Sensor_Data.trip_number;
+    data[COLLECTOR_KEY_ROUTE_ID] = Sensor_Data.routeID;
     data[COLLECTOR_KEY_LNG] = Sensor_Data.lng;
     data[COLLECTOR_KEY_LAT] = Sensor_Data.lat;
     data[COLLECTOR_KEY_MAG_X] = Sensor_Data.Magx;
@@ -295,6 +306,68 @@ void Task_Display(void* pvParameters) {
     }
 }
 
+
+void drawStaticMenu(void){
+    u8g2.clearBuffer();    
+    u8g2.setFont(u8g2_font_6x12_tf);
+    u8g2.drawStr((128 - u8g2.getStrWidth("Menu")) / 2, 12, "Menu");      
+    u8g2.drawHLine(5, 16, 118);    
+    u8g2.drawStr(20, 35, "Trip Number");
+    u8g2.drawStr(20, 50, "Route ID");  
+    u8g2.sendBuffer();
+}
+
+void drawArrowSelect(uint8_t state){  
+  u8g2.setDrawColor(0); 
+  u8g2.drawBox(3, 25, 10, 30);
+  u8g2.setDrawColor(1);
+  int arrowY = (state == 0) ? 50 : 35;
+  u8g2.drawStr(5, arrowY, ">");
+  u8g2.sendBuffer();
+}
+
+void displaySubPage2(void){    
+    int rowHeight = 11;   // Chiều cao mỗi hàng (để cân đối)
+    int paramWidth = 30;  // Chiều rộng cột "Param" (Nhỏ hơn)
+    int valueWidth = 80;  // Chiều rộng cột "Value" (Lớn hơn)
+    int startX = 5;       // Lề trái bảng
+    int startY = 10;      // Lề trên bảng    
+    for (int i = 0; i <= 5; i++) {
+      u8g2.drawHLine(startX, startY + (i * rowHeight), paramWidth + valueWidth);
+    }
+      
+    u8g2.drawVLine(startX + paramWidth, startY, rowHeight * 5);  
+    u8g2.setFont(u8g2_font_6x10_tf);    
+    u8g2.drawStr(startX + 5, startY - 2, "P");  // Cột 1 (Param nhỏ gọn)
+    u8g2.drawStr(startX + paramWidth + 5, startY - 2, "Value");  // Cột 2
+      
+    const char* params[] = {"ax", "ay", "az", "lat", "lng"};
+    const char* values[] = {"1.23", "-0.98", "0.50", "10.1234", "106.5678"};
+  
+    for (int i = 0; i < 5; i++) {
+      u8g2.drawStr(startX + 5, startY + (i + 1) * rowHeight - 2, params[i]);
+      u8g2.drawStr(startX + paramWidth + 5, startY + (i + 1) * rowHeight - 2, values[i]);
+    }
+      
+    u8g2.sendBuffer();
+}
+
+void updateValues() {    
+    u8g2.setDrawColor(0);
+    u8g2.drawBox(100, 25, 30, 40);  // Xóa vùng giá trị số    
+    u8g2.setDrawColor(1);
+    char buffer[10];
+    
+    sprintf(buffer, "%d", tripNumber);
+    u8g2.drawStr(100, 35, buffer);
+  
+    sprintf(buffer, "%d", routeID);
+    u8g2.drawStr(100, 50, buffer);
+  
+    u8g2.sendBuffer();
+}
+
+
 void Task_ReadSensor(void* pvParameters)
 {
     TickType_t xLastWakeTime = xTaskGetTickCount();
@@ -307,6 +380,9 @@ void Task_ReadSensor(void* pvParameters)
         if(xSemaphoreTake(xMutex, portMAX_DELAY)){
             accel.getEvent(&eventAccel);
             mag.getEvent(&eventMag);            
+            
+            Sensor_Data.trip_number = tripNumber;
+            Sensor_Data.routeID = routeID;
             
             Sensor_Data.Magx = eventMag.magnetic.x;
             Sensor_Data.Magy = eventMag.magnetic.y;
@@ -370,3 +446,5 @@ void Task_MenuProcess(void* pvParameters)
         vTaskDelay(5);
     }
 }
+
+
