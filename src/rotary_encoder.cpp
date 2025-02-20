@@ -13,6 +13,34 @@ int dtLastState = DT_INITIAL_STATE;
 int clkState = CLK_INITIAL_STATE;
 int dtState = DT_INITIAL_STATE;
 
+void CLK_ISR()
+{
+    clkState = digitalRead(CLK_PIN);
+    dtState = digitalRead(DT_PIN);
+    if (clkState != clkLastState)
+    {
+        if (clkState != dtState)
+        {
+            // Clockwise
+            clockwiseFlag = 1;
+            counterClockwiseFlag = 0;
+
+            clkLastState = clkState;
+            dtLastState = dtState;
+        }
+        else
+        {
+            // Counter clockwise
+            counterClockwiseFlag = 1;
+            clockwiseFlag = 0;
+
+            clkLastState = clkState;
+            dtLastState = dtState;
+        }
+    }
+}
+
+
 void RotaryEncoder_setup()
 {
     pinMode(CLK_PIN, INPUT);
@@ -21,6 +49,8 @@ void RotaryEncoder_setup()
 
     clkLastState = digitalRead(CLK_PIN);
     dtLastState = digitalRead(DT_PIN);
+
+    attachInterrupt(digitalPinToInterrupt(CLK_PIN), CLK_ISR, CHANGE);
 }
 void RotaryEncoder_loop()
 {
@@ -49,30 +79,6 @@ void RotaryEncoder_loop()
                     swLongPressFlag = 1;
                 }
             }
-        }
-    }
-
-    clkState = digitalRead(CLK_PIN);
-    dtState = digitalRead(DT_PIN);
-    if (clkState != clkLastState)
-    {
-        if (clkState != dtState)
-        {
-            // Clockwise
-            clockwiseFlag = 1;
-            counterClockwiseFlag = 0;
-
-            clkLastState = clkState;
-            dtLastState = dtState;
-        }
-        else
-        {
-            // Counter clockwise
-            counterClockwiseFlag = 1;
-            clockwiseFlag = 0;
-
-            clkLastState = clkState;
-            dtLastState = dtState;
         }
     }
 }
