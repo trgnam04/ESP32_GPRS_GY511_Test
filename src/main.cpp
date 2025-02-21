@@ -1,4 +1,4 @@
-#define CORE_DEBUG_LEVEL 5
+// #define CORE_DEBUG_LEVEL 5
 
 #include <TinyGPSPlus.h>
 #include <Arduino.h>
@@ -59,6 +59,7 @@ Adafruit_LSM303_Accel_Unified accel = Adafruit_LSM303_Accel_Unified(12345);
 // GPRS
 HardwareSerial hardware(2);
 TinyGPSPlus gps;
+
 // Set up for Callback
 Server_Side_RPC<MAX_RPC_SUBSCRIPTIONS, MAX_RPC_RESPONSE> rpc;
 const std::array<IAPI_Implementation*, 1U> apis = {
@@ -121,6 +122,7 @@ void Task_SendData(void* pvParameters);
 void Task_CheckConnection(void* pvParameters);
 void Task_MenuProcess(void* pvParameters);
 void Task_ReadRotaryEncoder(void* pvParameters);
+void Task_ReadGPS(void* pvParameters);
 
 
 typedef enum{
@@ -159,8 +161,10 @@ TaskHandle_t TaskHandle_ReadRotary;
 
 void setup() {
     Serial.begin(SERIAL_BAUDRATE);       
-    Wire.begin(SDA, SCK);
+    delay(100);
     hardware.begin(9600);    
+    delay(100);
+    Wire.begin(SDA, SCK);    
     delay(1000);
     
     InitWiFi();
@@ -175,6 +179,7 @@ void setup() {
     xTaskCreatePinnedToCore(Task_CheckConnection, "Task_CheckConnection", 2048, NULL, 2, &TaskHandle_CheckConnection, 0);
     xTaskCreatePinnedToCore(Task_MenuProcess, "Task_MenuProcess", 2048, NULL, 4, &TaskHandle_MenuProcess, 1);
     xTaskCreatePinnedToCore(Task_ReadRotaryEncoder, "Task_ReadRotary", 1024, NULL, 5, &TaskHandle_ReadRotary, 1);
+    xTaskCreatePinnedToCore(Task_ReadGPS, "Task_ReadGPS", 1024, NULL, 6, NULL, 0);
 }
 
 void loop() {
@@ -466,14 +471,12 @@ void Task_ReadSensor(void* pvParameters)
     TickType_t xLastWakeTime = xTaskGetTickCount();
     setupMagSensor();
     sensors_event_t eventMag;
-    sensors_event_t eventAccel;        
+    sensors_event_t eventAccel;     
+    double temp_lat;   
+    double temp_lng;
+    
     while(1){                
-        /* Display the results (acceleration is measured in m/s^2) */                        
-        if(hardware.available() > 0){             
-            gps.encode(hardware.read());              
-            Sensor_Data.lat = gps.location.lat();
-            Sensor_Data.lng = gps.location.lng();
-        }
+        /* Display the results (acceleration is measured in m/s^2) */                                
         if (xSemaphoreTake(xI2CSemaphore, portMAX_DELAY)){        
             accel.getEvent(&eventAccel);
             mag.getEvent(&eventMag);            
@@ -492,7 +495,7 @@ void Task_ReadSensor(void* pvParameters)
             xSemaphoreGive(xI2CSemaphore);
         }
         
-        vTaskDelayUntil(&xLastWakeTime, 800);
+        vTaskDelayUntil(&xLastWakeTime, 500);
         /* Delay before the next sample */        
     }
 }
@@ -557,5 +560,22 @@ void Task_ReadRotaryEncoder(void* pvParameters){
         // menu_process_fsm();
         RotaryEncoder_loop();
         vTaskDelay(TIME_READ);
+    }
+}
+
+void Task_ReadGPS(void* pvParameters){
+    while(1){
+        if(hardware.available() > 0){             
+            char t = hardware.read();
+            gps.encode(t);                   
+            if(gps.location.isValid()){
+                Sensor_Data.lat = gps.location.lat();
+                Sensor_Data.lng = gps.location.lng();    
+            }            
+            else{
+                Serial.println("INVALID");
+            }
+        }        
+        vTaskDelay(10);
     }
 }
