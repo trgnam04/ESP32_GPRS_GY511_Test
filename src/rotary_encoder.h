@@ -12,7 +12,7 @@
 #define DT_INITIAL_STATE 1
 
 #define TIME_OUT_FOR_LONG_PRESS 2000
-#define TIME_READ 1
+#define TIME_READ 5
 
 void RotaryEncoder_setup();
 void RotaryEncoder_loop();

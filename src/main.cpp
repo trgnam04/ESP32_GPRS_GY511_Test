@@ -15,6 +15,14 @@
 #define SERIAL_BAUDRATE 9600
 #define TX_PIN 17
 #define RX_PIN 16
+#define SDA 21
+#define SCK 22
+#define MQTT    1
+#undef  HTTP
+
+SemaphoreHandle_t xI2CSemaphore;
+SemaphoreHandle_t xSignalSendingSemaphore;
+
 
 // set up Wifi
 constexpr char WIFI_SSID[] = "271104E";
@@ -61,22 +69,6 @@ WiFiClient espClient;
 Arduino_MQTT_Client mqttClient(espClient);
 ThingsBoard tb(mqttClient, MAX_MESSAGE_RECEIVE_SIZE, MAX_MESSAGE_SEND_SIZE, Default_Max_Stack_Size, apis);
 
-// status for subcribing
-bool subscribed = false;
-
-
-#define SDA 21
-#define SCK 22
-
-// CONFIG
-#undef LCD 
-#define _SERIAL 1
-
-#define FREQENCE 1
-#define MQTT    1
-#undef  HTTP
-
-
 
 // Sensor
 typedef struct{
@@ -100,15 +92,15 @@ DynamicJsonDocument data(256);
 
 size_t data_size;
 uint32_t timestamp = 0;
+volatile bool isSending = false;
 
 // Supported for Display
 void displayNum(float num, int8_t x, int8_t y);
 void updateValues(void);
-void displaySubPage2(void);
+void displaySubPage(void);
 void drawArrowSelect(uint8_t state);
 void drawStaticMenu(void);
 void updateValues(void);
-void testDisplay(void);
 
 void display_process_fsm(void);
 void menu_process_fsm(void);
@@ -120,24 +112,16 @@ void InitWiFi(void);
 bool reconnect(void);
 
 // Supported Task Function
-void displaySensorDetails(void);
-void setupLCD(void);
 void setupMagSensor(void);
 void convertData(void);
 
 // Task define 
-void Task_Display(void* pvParameters);
 void Task_ReadSensor(void* pvParameters);
 void Task_SendData(void* pvParameters);
 void Task_CheckConnection(void* pvParameters);
 void Task_MenuProcess(void* pvParameters);
 void Task_ReadRotaryEncoder(void* pvParameters);
 
-// Display Page
-void Menu(void);
-void Page1(void); // Accel
-void Page2(void); // Mag 
-void Page3(void); // GPS
 
 typedef enum{
     STATE_IDLE_MENU,
@@ -161,9 +145,16 @@ setting_state_t SettingState = STATE_IDLE_SETTING;
 display_state_t DisplayState = STATE_IDLE_DISPLAY;
 menu_state_t MenuState = STATE_IDLE_MENU;
 
-int tripNumber = 0;
-int routeID = 0;
+volatile uint16_t tripNumber = 0;
+volatile uint16_t routeID = 0;
+uint16_t screen_tick = 0;
+uint16_t display_tick = 250; // switch screen every 5s
 
+TaskHandle_t TaskHandle_ReadSensor;
+TaskHandle_t TaskHandle_SendData;
+TaskHandle_t TaskHandle_CheckConnection;
+TaskHandle_t TaskHandle_MenuProcess;
+TaskHandle_t TaskHandle_ReadRotary;
 
 
 void setup() {
@@ -173,15 +164,17 @@ void setup() {
     delay(1000);
     
     InitWiFi();
+
+    xI2CSemaphore = xSemaphoreCreateMutex();
+    xSignalSendingSemaphore = xSemaphoreCreateMutex();
    
 
     // Tăng stack lên 4096 tránh lỗi reset
-    xTaskCreatePinnedToCore(Task_ReadSensor, "Task_ReadSensor", 4096, NULL, 2, NULL, 0);
-    // xTaskCreatePinnedToCore(Task_Display, "Task_Display", 4096, NULL, 1, NULL, 0);
-    xTaskCreatePinnedToCore(Task_SendData, "Task_SendData", 4096, NULL, 3, NULL, 0);
-    xTaskCreatePinnedToCore(Task_CheckConnection, "Task_CheckConnection", 4096, NULL, 1, NULL, 0);
-    xTaskCreatePinnedToCore(Task_MenuProcess, "Task_MenuProcess", 4096, NULL, 4, NULL, 0);
-    xTaskCreatePinnedToCore(Task_ReadRotaryEncoder, "Task_ReadRotary", 4096, NULL, 5, NULL, 0);
+    xTaskCreatePinnedToCore(Task_ReadSensor, "Task_ReadSensor", 4096, NULL, 1, &TaskHandle_ReadSensor, 0);    
+    xTaskCreatePinnedToCore(Task_SendData, "Task_SendData", 2048, NULL, 3, &TaskHandle_SendData, 0);
+    xTaskCreatePinnedToCore(Task_CheckConnection, "Task_CheckConnection", 2048, NULL, 2, &TaskHandle_CheckConnection, 0);
+    xTaskCreatePinnedToCore(Task_MenuProcess, "Task_MenuProcess", 2048, NULL, 4, &TaskHandle_MenuProcess, 1);
+    xTaskCreatePinnedToCore(Task_ReadRotaryEncoder, "Task_ReadRotary", 1024, NULL, 5, &TaskHandle_ReadRotary, 1);
 }
 
 void loop() {
@@ -292,6 +285,7 @@ void displaySubPage(uint8_t idx){
     u8g2.drawStr(startX + 5, startY - 2, "P");  // Cột 1 (Param nhỏ gọn)
     u8g2.drawStr(startX + paramWidth + 5, startY - 2, "Value");  // Cột 2
     const char* params[5];
+    char values[5][10];
     switch(idx){
         case 1:{
             params[0] = "ax";
@@ -299,6 +293,11 @@ void displaySubPage(uint8_t idx){
             params[2] = "az";        
             params[3] = "tID";
             params[4] = "rID";
+            dtostrf(Sensor_Data.Ax, 6, 2, values[0]);
+            dtostrf(Sensor_Data.Ay, 6, 2, values[1]);
+            dtostrf(Sensor_Data.Az, 6, 2, values[2]);
+            sprintf(values[3], "%d", Sensor_Data.trip_number);
+            sprintf(values[4], "%d", Sensor_Data.routeID);
             break;
         }
         case 2:{
@@ -307,11 +306,14 @@ void displaySubPage(uint8_t idx){
             params[2] = "mz";        
             params[3] = "lat";
             params[4] = "lng";
+            dtostrf(Sensor_Data.Magx, 6, 2, values[0]);
+            dtostrf(Sensor_Data.Magy, 6, 2, values[1]);
+            dtostrf(Sensor_Data.Magz, 6, 2, values[2]);
+            dtostrf(Sensor_Data.lat, 6, 2, values[3]);
+            dtostrf(Sensor_Data.lng, 6, 2, values[4]);
             break;
         }
-    }
-    
-    const char* values[] = {"1.23", "-0.98", "0.50", "10.1234", "106.5678"};
+    }        
   
     for (int i = 0; i < 5; i++) {
       u8g2.drawStr(startX + 5, startY + (i + 1) * rowHeight - 2, params[i]);
@@ -336,58 +338,10 @@ void updateValues() {
     u8g2.sendBuffer();
 }
 
-uint8_t state = 3;
-
 void flushData(void){
     tripNumber = 0;
     routeID = 0;
     u8g2.clearBuffer();
-}
-
-void testDisplay(void){
-    switch(state){
-        case 3:{
-            if(1){
-                drawArrowSelect(1);
-                state = 1;
-            }
-            break;
-        }
-        case 1:{
-            if(isDecrease()){
-                if(tripNumber >= 0){
-                    tripNumber--;
-                }                
-                break;    
-            }
-            if(isIncrease()){                
-                tripNumber++;
-                break;
-            }
-            if(isPressed()){                
-                drawArrowSelect(0);
-                state = 0;
-            }
-            break;
-        }
-        case 0:{
-            if(isDecrease()){            
-                routeID--;
-                break;
-            }
-            if(isIncrease()){                
-                routeID++;
-                break;
-            }
-            if(isPressed()){                
-                drawArrowSelect(1);
-                state = 1;
-            }
-            break;
-        }
-    }        
-    updateValues();
-    RotaryEncoder_loop();        
 }
 
 void setting_process_fsm(void){
@@ -446,8 +400,13 @@ void menu_process_fsm(void){
             setting_process_fsm();
             if(isLongPressed()){
                 SettingState = STATE_IDLE_SETTING;
-                flushData();
+                xTaskNotifyGive(TaskHandle_SendData);                
+                if(xSemaphoreTake(xSignalSendingSemaphore, portMAX_DELAY)){                    
+                    isSending = true;
+                    xSemaphoreGive(xSignalSendingSemaphore);
+                }                                                
                 resetRotaryEncoder();
+                u8g2.clearBuffer();
                 MenuState = STATE_MEASURING;
             }
             break;
@@ -457,15 +416,16 @@ void menu_process_fsm(void){
             if(isLongPressed()){
                 flushData();                
                 resetRotaryEncoder();
+                if(xSemaphoreTake(xSignalSendingSemaphore, portMAX_DELAY)){                    
+                    isSending = false;
+                    xSemaphoreGive(xSignalSendingSemaphore);
+                }                                
                 MenuState = STATE_IDLE_MENU;
             }
             break;
         }
     }
 }
-
-uint16_t screen_tick = 0;
-uint16_t display_tick = 500;
 
 void display_process_fsm(void){
     screen_tick = (screen_tick + 1) % display_tick;
@@ -506,33 +466,33 @@ void Task_ReadSensor(void* pvParameters)
     TickType_t xLastWakeTime = xTaskGetTickCount();
     setupMagSensor();
     sensors_event_t eventMag;
-    sensors_event_t eventAccel;    
-    timestamp = 0;
+    sensors_event_t eventAccel;        
     while(1){                
         /* Display the results (acceleration is measured in m/s^2) */                        
-        accel.getEvent(&eventAccel);
-        mag.getEvent(&eventMag);            
-        
-        Sensor_Data.trip_number = tripNumber;
-        Sensor_Data.routeID = routeID;
-        
-        Sensor_Data.Magx = eventMag.magnetic.x;
-        Sensor_Data.Magy = eventMag.magnetic.y;
-        Sensor_Data.Magz = eventMag.magnetic.z;                        
-        Sensor_Data.Ax = eventAccel.acceleration.x;
-        Sensor_Data.Ay = eventAccel.acceleration.y;
-        Sensor_Data.Az = eventAccel.acceleration.z;       
-        
         if(hardware.available() > 0){             
             gps.encode(hardware.read());              
             Sensor_Data.lat = gps.location.lat();
             Sensor_Data.lng = gps.location.lng();
         }
+        if (xSemaphoreTake(xI2CSemaphore, portMAX_DELAY)){        
+            accel.getEvent(&eventAccel);
+            mag.getEvent(&eventMag);            
+            
+            Sensor_Data.trip_number = tripNumber;
+            Sensor_Data.routeID = routeID;
+            
+            Sensor_Data.Magx = eventMag.magnetic.x;
+            Sensor_Data.Magy = eventMag.magnetic.y;
+            Sensor_Data.Magz = eventMag.magnetic.z;                        
+            Sensor_Data.Ax = eventAccel.acceleration.x;
+            Sensor_Data.Ay = eventAccel.acceleration.y;
+            Sensor_Data.Az = eventAccel.acceleration.z;                                           
 
+            convertData();        
+            xSemaphoreGive(xI2CSemaphore);
+        }
         
-        convertData();
-        timestamp = millis();        
-        vTaskDelayUntil(&xLastWakeTime, 500);
+        vTaskDelayUntil(&xLastWakeTime, 800);
         /* Delay before the next sample */        
     }
 }
@@ -540,10 +500,22 @@ void Task_ReadSensor(void* pvParameters)
 void Task_SendData(void* pvParameters)
 {
     TickType_t xLastWakeTime = xTaskGetTickCount();
+    bool state_send_data = false;
     vTaskDelay(1000);
     while(1){
-        tb.sendTelemetryJson(data, data_size);
-        vTaskDelayUntil(&xLastWakeTime, 1000);
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);        
+        if(xSemaphoreTake(xSignalSendingSemaphore, portMAX_DELAY)){
+            state_send_data = isSending;
+            xSemaphoreGive(xSignalSendingSemaphore);
+        }                
+        while(state_send_data){
+            tb.sendTelemetryJson(data, data_size);  
+            vTaskDelayUntil(&xLastWakeTime, 1000);
+            if(!state_send_data){
+                break;
+            }
+        }
+        
     }
 }
 
@@ -551,9 +523,7 @@ void Task_CheckConnection(void* pvParameters)
 {
     TickType_t xLastWakeTime = xTaskGetTickCount();
     while(1){
-        if (!tb.connected()) {            
-            // Reconnect to the ThingsBoard server,
-            // if a connection was disrupted or has not yet been established
+        if (!tb.connected()) {                        
             Serial.printf("Connecting to: (%s) with token (%s)\n", THINGSBOARD_SERVER, TOKEN);
             if (!tb.connect(THINGSBOARD_SERVER, TOKEN, THINGSBOARD_PORT)) {                          
                 Serial.println("Failed to connect");                
@@ -573,8 +543,11 @@ void Task_MenuProcess(void* pvParameters)
     u8g2.begin();
     drawStaticMenu();    
     while(1){        
-        menu_process_fsm();        
-        vTaskDelay(5);
+        if(xSemaphoreTake(xI2CSemaphore, portMAX_DELAY)){
+            menu_process_fsm();                    
+            xSemaphoreGive(xI2CSemaphore);
+        }   
+        vTaskDelay(50);     
     }
 }
 

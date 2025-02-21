@@ -1,17 +1,17 @@
 #include "rotary_encoder.h"
 #include <Arduino.h>
 
-int swBuffer[4] = {NORMAL_STATE, NORMAL_STATE, NORMAL_STATE, NORMAL_STATE};
-int timeOutForPressed = TIME_OUT_FOR_LONG_PRESS / TIME_READ;
-int swPressFlag = 0;
-int swLongPressFlag = 0;
-int clockwiseFlag = 0;
-int counterClockwiseFlag = 0;
+bool swBuffer[4] = {NORMAL_STATE, NORMAL_STATE, NORMAL_STATE, NORMAL_STATE};
+uint16_t timeOutForPressed = TIME_OUT_FOR_LONG_PRESS / TIME_READ;
+volatile bool swPressFlag = 0;
+volatile bool swLongPressFlag = 0;
+volatile bool clockwiseFlag = 0;
+volatile bool counterClockwiseFlag = 0;
 
-int clkLastState = CLK_INITIAL_STATE;
-int dtLastState = DT_INITIAL_STATE;
-int clkState = CLK_INITIAL_STATE;
-int dtState = DT_INITIAL_STATE;
+volatile bool clkLastState = CLK_INITIAL_STATE;
+volatile bool dtLastState = DT_INITIAL_STATE;
+volatile bool clkState = CLK_INITIAL_STATE;
+volatile bool dtState = DT_INITIAL_STATE;
 
 void RotaryEncoder_setup()
 {
