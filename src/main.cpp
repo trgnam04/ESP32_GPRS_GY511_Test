@@ -21,7 +21,6 @@
 #undef  HTTP
 
 SemaphoreHandle_t xI2CSemaphore;
-SemaphoreHandle_t xSignalSendingSemaphore;
 
 
 // set up Wifi
@@ -157,6 +156,7 @@ TaskHandle_t TaskHandle_SendData;
 TaskHandle_t TaskHandle_CheckConnection;
 TaskHandle_t TaskHandle_MenuProcess;
 TaskHandle_t TaskHandle_ReadRotary;
+TaskHandle_t TaskHandle_ReadGPS;
 
 
 void setup() {
@@ -169,22 +169,35 @@ void setup() {
     
     InitWiFi();
 
-    xI2CSemaphore = xSemaphoreCreateMutex();
-    xSignalSendingSemaphore = xSemaphoreCreateMutex();
+    xI2CSemaphore = xSemaphoreCreateMutex();    
    
 
     // Tăng stack lên 4096 tránh lỗi reset
-    xTaskCreatePinnedToCore(Task_ReadSensor, "Task_ReadSensor", 4096, NULL, 1, &TaskHandle_ReadSensor, 0);    
-    xTaskCreatePinnedToCore(Task_SendData, "Task_SendData", 2048, NULL, 3, &TaskHandle_SendData, 0);
+    xTaskCreatePinnedToCore(Task_ReadSensor, "Task_ReadSensor", 4096, NULL, 1, &TaskHandle_ReadSensor, 0);
+    vTaskSuspend(TaskHandle_ReadSensor);
+
     xTaskCreatePinnedToCore(Task_CheckConnection, "Task_CheckConnection", 2048, NULL, 2, &TaskHandle_CheckConnection, 0);
-    xTaskCreatePinnedToCore(Task_MenuProcess, "Task_MenuProcess", 2048, NULL, 4, &TaskHandle_MenuProcess, 1);
-    xTaskCreatePinnedToCore(Task_ReadRotaryEncoder, "Task_ReadRotary", 1024, NULL, 5, &TaskHandle_ReadRotary, 1);
-    xTaskCreatePinnedToCore(Task_ReadGPS, "Task_ReadGPS", 1024, NULL, 6, NULL, 0);
+    vTaskSuspend(TaskHandle_CheckConnection);
+
+    xTaskCreatePinnedToCore(Task_SendData, "Task_SendData", 2048, NULL, 3, &TaskHandle_SendData, 0);    
+    vTaskSuspend(TaskHandle_SendData);
+
+    xTaskCreatePinnedToCore(Task_ReadGPS, "Task_ReadGPS", 1024, NULL, 4, &TaskHandle_ReadGPS, 0);
+    vTaskSuspend(TaskHandle_ReadGPS);
+    
+    xTaskCreatePinnedToCore(Task_MenuProcess, "Task_MenuProcess", 2048, NULL, 1, &TaskHandle_MenuProcess, 1);    
+    xTaskCreatePinnedToCore(Task_ReadRotaryEncoder, "Task_ReadRotary", 1024, NULL, 2, &TaskHandle_ReadRotary, 1);
+    
+    delay(5000);
+    vTaskResume(TaskHandle_ReadSensor);
+    vTaskResume(TaskHandle_CheckConnection);
+    vTaskResume(TaskHandle_SendData);
+    vTaskResume(TaskHandle_ReadGPS);
 }
 
 void loop() {
     // Không làm gì trong loop vì đang chạy RTOS
-    vTaskDelay(portMAX_DELAY);
+    // vTaskDelay(portMAX_DELAY);
 }
 
 /*----------------------------------------FUNC DEFINE--------------------------------------------------*/
@@ -405,11 +418,8 @@ void menu_process_fsm(void){
             setting_process_fsm();
             if(isLongPressed()){
                 SettingState = STATE_IDLE_SETTING;
-                xTaskNotifyGive(TaskHandle_SendData);                
-                if(xSemaphoreTake(xSignalSendingSemaphore, portMAX_DELAY)){                    
-                    isSending = true;
-                    xSemaphoreGive(xSignalSendingSemaphore);
-                }                                                
+                xTaskNotifyGive(TaskHandle_SendData);                                
+                isSending = true;                                                                
                 resetRotaryEncoder();
                 u8g2.clearBuffer();
                 MenuState = STATE_MEASURING;
@@ -420,11 +430,8 @@ void menu_process_fsm(void){
             display_process_fsm();
             if(isLongPressed()){
                 flushData();                
-                resetRotaryEncoder();
-                if(xSemaphoreTake(xSignalSendingSemaphore, portMAX_DELAY)){                    
-                    isSending = false;
-                    xSemaphoreGive(xSignalSendingSemaphore);
-                }                                
+                resetRotaryEncoder();                
+                isSending = false;                                               
                 MenuState = STATE_IDLE_MENU;
             }
             break;
@@ -471,13 +478,11 @@ void Task_ReadSensor(void* pvParameters)
     TickType_t xLastWakeTime = xTaskGetTickCount();
     setupMagSensor();
     sensors_event_t eventMag;
-    sensors_event_t eventAccel;     
-    double temp_lat;   
-    double temp_lng;
+    sensors_event_t eventAccel;         
     
     while(1){                
         /* Display the results (acceleration is measured in m/s^2) */                                
-        if (xSemaphoreTake(xI2CSemaphore, portMAX_DELAY)){        
+        if (xSemaphoreTake(xI2CSemaphore, portMAX_DELAY)){                    
             accel.getEvent(&eventAccel);
             mag.getEvent(&eventMag);            
             
@@ -500,25 +505,20 @@ void Task_ReadSensor(void* pvParameters)
     }
 }
 
+
 void Task_SendData(void* pvParameters)
 {
-    TickType_t xLastWakeTime = xTaskGetTickCount();
-    bool state_send_data = false;
-    vTaskDelay(1000);
-    while(1){
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);        
-        if(xSemaphoreTake(xSignalSendingSemaphore, portMAX_DELAY)){
-            state_send_data = isSending;
-            xSemaphoreGive(xSignalSendingSemaphore);
-        }                
-        while(state_send_data){
+    TickType_t xLastWakeTime = xTaskGetTickCount();  // Cập nhật thời gian trước vòng lặp
+    while(1) {        
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);                            
+        while(isSending) {            
+            if (!isSending) {                
+                xLastWakeTime = xTaskGetTickCount(); 
+                break;
+            }                            
             tb.sendTelemetryJson(data, data_size);  
             vTaskDelayUntil(&xLastWakeTime, 1000);
-            if(!state_send_data){
-                break;
-            }
         }
-        
     }
 }
 
@@ -550,7 +550,7 @@ void Task_MenuProcess(void* pvParameters)
             menu_process_fsm();                    
             xSemaphoreGive(xI2CSemaphore);
         }   
-        vTaskDelay(50);     
+        vTaskDelay(100);     
     }
 }
 
@@ -565,9 +565,8 @@ void Task_ReadRotaryEncoder(void* pvParameters){
 
 void Task_ReadGPS(void* pvParameters){
     while(1){
-        if(hardware.available() > 0){             
-            char t = hardware.read();
-            gps.encode(t);                   
+        if(hardware.available() > 0){                     
+            gps.encode(hardware.read());                   
             if(gps.location.isValid()){
                 Sensor_Data.lat = gps.location.lat();
                 Sensor_Data.lng = gps.location.lng();    
