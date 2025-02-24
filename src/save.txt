@@ -1,0 +1,365 @@
+// #include <Wire.h>
+// #include <Adafruit_Sensor.h>
+// #include <Adafruit_LSM303_U.h>
+// #include <HTTPClient.h>
+
+// #include <SPI.h>
+// #include <HttpClient.h>
+// #include <WiFi.h>
+
+// #define SDA GPIO_NUM_21
+// #define SCL GPIO_NUM_22
+// /* Assign a unique ID to this sensor at the same time */
+// // Adafruit_LSM303_Accel_Unified accel = Adafruit_LSM303_Accel_Unified(54321);
+// Adafruit_LSM303_Mag_Unified mag = Adafruit_LSM303_Mag_Unified(54321);
+
+// WiFiClient wifi;
+// HttpClient http(wifi);
+
+// {
+//   sensor_t sensor;
+//   mag.getSensor(&sensor);
+//   Serial.println("------------------------------------");
+//   Serial.print  ("Sensor:       "); Serial.println(sensor.name);
+//   Serial.print  ("Driver Ver:   "); Serial.println(sensor.version);
+//   Serial.print  ("Unique ID:    "); Serial.println(sensor.sensor_id);
+//   Serial.print  ("Max Value:    "); Serial.print(sensor.max_value); Serial.println(" m/s^2");
+//   Serial.print  ("Min Value:    "); Serial.print(sensor.min_value); Serial.println(" m/s^2");
+//   Serial.print  ("Resolution:   "); Serial.print(sensor.resolution); Serial.println(" m/s^2");
+//   Serial.println("------------------------------------");
+//   Serial.println("");
+//   delay(500);
+// }
+
+// const char* ssid = "v";
+// const char* password = "12345678";
+// // Name of the server we want to connect to
+// const char kHostname[] = "ems.thebestits.vn";
+// const char kPath[] = "/Value/GetData"; // ?stationcode=K13_TEST&data=kaka_nam
+
+// // Number of milliseconds to wait without receiving any data before we give up
+// const int kNetworkTimeout = 30 * 1000;
+// // Number of milliseconds to wait if no data is available before trying again
+// const int kNetworkDelay = 1000;
+
+// void lsm303_init(){
+//   Wire.begin(SDA, SCL);
+//   Serial.println("Accelerometer Test"); Serial.println("");
+//   if(!mag.begin())
+//   {
+//     /* There was a problem detecting the ADXL345 ... check your connections */
+//     Serial.println("Ooops, no LSM303 detected ... Check your wiring!");
+//     while(1);
+//   };
+//   displaySensorDetails();
+// };
+
+// void wifi_init(){
+//   WiFi.begin(ssid, password);
+//   Serial.print("Connecting to Wi-Fi");
+//   while (WiFi.status() != WL_CONNECTED) {
+//     Serial.print(".");
+//     delay(500);
+//   }
+//   Serial.println("Connected!");
+// };
+
+// int http_get(const char * hostname, const char * path, char * data, char * retData, int * retDataSize){
+//   int err = 0;
+//   *retDataSize = 0;
+//   // path processing
+//   char newpath[200];
+//   sprintf(newpath, "%s?stationcode=K13_TEST&data=%s", path, data);
+//   err = http.get(hostname, newpath);
+//   if (err == 0) {
+//     Serial.println("start request");
+//     err = http.responseStatusCode();
+//     if (err >= 0) {
+//       Serial.print("Status code: ");
+//       Serial.println(err);
+//       int bodyLen;
+//       err = http.skipResponseHeaders();
+//       if (err >= 0) {
+//         bodyLen = http.contentLength();
+//         // *size = bodyLen;
+//         Serial.print("Content length is: ");
+//         Serial.println(bodyLen);
+//         Serial.println();
+//         Serial.println("Body returned follows:");
+
+//         unsigned long timeoutStart = millis();
+
+//         while ((http.connected() || http.available()) &&
+//                ((millis() - timeoutStart) < kNetworkTimeout)) {
+//           if (http.available()) {
+//             retData[(*retDataSize)++] = http.read();
+//             bodyLen--;
+//             timeoutStart = millis();
+//           } else {
+//             delay(kNetworkDelay);
+//           }
+//         }
+//         Serial.println(); // Add a newline after the body
+
+//       } else {
+//         Serial.print("Failed to skip response headers: ");
+//         Serial.println(err);
+//         return -1;
+//       }
+//     } else {
+//       Serial.print("Getting response failed: ");
+//       Serial.println(err);
+//       return -1;
+//     }
+//   } else {
+//     Serial.print("Connect failed: ");
+//     Serial.println(err);
+//     return -1;
+//   };
+//   retData[*retDataSize] = 0;
+//   return 0;
+// };
+
+// void setup(void)
+// {
+//   Serial.begin(9600);
+//   // LSM303
+//   lsm303_init();
+//   // WIFI
+//   wifi_init();
+// }
+
+// void loop(void)
+// {
+//   /* Get a new sensor event */
+//   // sensors_event_t event;
+//   // mag.getEvent(&event);
+
+//   /* Display the results (acceleration is measured in m/s^2) */
+// //   Serial.print("X: "); Serial.print(event.acceleration.x); Serial.print("  ");
+// //   Serial.print("Y: "); Serial.print(event.acceleration.y); Serial.print("  ");
+// //   Serial.print("Z: "); Serial.print(event.acceleration.z); Serial.print("  ");Serial.println("m/s^2 ");
+
+//   // Serial.print("__X: "); Serial.print(event.magnetic.x); Serial.print("  ");
+//   // Serial.print("__Y: "); Serial.print(event.magnetic.y); Serial.print("  ");
+//   // Serial.print("__Z: "); Serial.print(event.magnetic.z); Serial.print("  ");Serial.println("Gauss ");
+//   /* Delay before the next sample */
+//   // delay(2000);
+//   // ****************************************************************************************************
+//   char data[] = "bkitk22";
+//   char retData[100];
+//   int retDataSize;
+
+//   int err = http_get(kHostname, kPath, data, retData, &retDataSize);
+
+//   Serial.println(retData);
+//   http.stop();
+
+//   while (1);
+// }
+
+#ifdef ESP32
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#endif // ESP32
+
+#include <Wire.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_LSM303_U.h>
+#include <SPI.h>
+
+#include <Arduino_MQTT_Client.h>
+#include <Server_Side_RPC.h>
+#include <ThingsBoard.h>
+#include <ArduinoJson.h>
+
+constexpr char WIFI_SSID[] = "v";
+constexpr char WIFI_PASSWORD[] = "12345678";
+constexpr char TOKEN[] = "0EbSWCgO5wPgnRfAhUwr"; // device token
+constexpr char THINGSBOARD_SERVER[] = "app.coreiot.io";
+constexpr uint16_t THINGSBOARD_PORT = 1883U;
+
+// DEFINE CONST
+#define SDA GPIO_NUM_21
+#define SCL GPIO_NUM_22
+
+
+// Maximum size packets will ever be sent or received by the underlying MQTT client,
+// if the size is to small messages might not be sent or received messages will be discarded
+constexpr uint16_t MAX_MESSAGE_SEND_SIZE = 256U;
+constexpr uint16_t MAX_MESSAGE_RECEIVE_SIZE = 256U;
+
+constexpr uint32_t SERIAL_DEBUG_BAUD = 9600U;
+
+constexpr uint8_t MAX_RPC_SUBSCRIPTIONS = 10U;
+constexpr uint8_t MAX_RPC_RESPONSE = 10U;
+
+WiFiClient espClient;
+Arduino_MQTT_Client mqttClient(espClient);
+DynamicJsonDocument my_json_data(1024);
+
+Adafruit_LSM303_Accel_Unified accel = Adafruit_LSM303_Accel_Unified(12345);
+Adafruit_LSM303_Mag_Unified mag = Adafruit_LSM303_Mag_Unified(54321);
+
+// Initialize used apis
+Server_Side_RPC<MAX_RPC_SUBSCRIPTIONS, MAX_RPC_RESPONSE> rpc;
+const std::array<IAPI_Implementation *, 1U> apis = {
+    &rpc};
+// Initialize ThingsBoard instance with the maximum needed buffer size
+ThingsBoard tb(mqttClient, MAX_MESSAGE_RECEIVE_SIZE, MAX_MESSAGE_SEND_SIZE, Default_Max_Stack_Size, apis);
+
+// Statuses for subscribing to rpc
+bool subscribed = false;
+
+void InitWiFi()
+{
+  Serial.println("Connecting to AP ...");
+  // Attempting to establish a connection to the given WiFi network
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("Connected to AP");
+}
+
+bool reconnect()
+{
+  // Check to ensure we aren't connected yet
+  const wl_status_t status = WiFi.status();
+  if (status == WL_CONNECTED)
+  {
+    return true;
+  }
+
+  // If we aren't establish a new connection to the given WiFi network
+  InitWiFi();
+  return true;
+}
+void lsm303_init(){
+  Wire.begin(SDA, SCL);
+  Serial.println("Accelerometer Test"); Serial.println("");
+  if(!mag.begin())
+  {
+    /* There was a problem detecting the ADXL345 ... check your connections */
+    Serial.println("Ooops, no LSM303 detected ... Check your wiring!");
+    while(1);
+  };
+  if(!accel.begin())
+  {
+    /* There was a problem detecting the ADXL345 ... check your connections */
+    Serial.println("Ooops, no LSM303 detected ... Check your wiring!");
+    while(1);
+  };
+  
+  Serial.println("Accelerometer Test OK"); Serial.println("");
+  // displaySensorDetails();
+};
+
+void publishData(
+  float * lng,
+  float * lat,
+  float * magX,
+  float * magY,
+  float * magZ,
+  float * accX,
+  float * accY,
+  float * accZ
+)
+{
+  my_json_data["lng"] = *lng;
+  my_json_data["lat"] = *lat;
+  my_json_data["magX"] = *magX;
+  my_json_data["magY"] = *magY;
+  my_json_data["magZ"] = *magZ;
+  my_json_data["accX"] = *accX;
+  my_json_data["accY"] = *accY;
+  my_json_data["accZ"] = *accZ;
+  size_t my_json_data_size = Helper::Measure_Json(my_json_data);
+  tb.sendTelemetryJson(my_json_data, my_json_data_size);
+};
+// JSON
+
+
+// size_t jsonSetDefault(DynamicJsonDocument* my_json_data){
+//   (*my_json_data)["lng"] = 0.0;
+//   (*my_json_data)["lat"] = 0.0;
+//   (*my_json_data)["magX"] = 0.0;
+//   (*my_json_data)["magY"] = 0.0;
+//   (*my_json_data)["magZ"] = 0.0;
+//   (*my_json_data)["accX"] = 0.0;
+//   (*my_json_data)["accY"] = 0.0;
+//   (*my_json_data)["accZ"] = 0.0;
+//   return Helper::Measure_Json(my_json_data);
+// };
+
+void setup()
+{
+  Serial.begin(SERIAL_DEBUG_BAUD);
+  InitWiFi();
+  lsm303_init();
+  // my_json_data_size = jsonSetDefault(&my_json_data);
+}
+
+float lng = 106.806003;
+float lat = 10.879747;
+float magX = 0.123;
+float magY = 0.234;
+float magZ = 0.345;
+float accX = 0.000;
+float accY = 0.000;
+float accZ = 0.000;
+
+sensors_event_t magEvent, accelEvent;
+float old_accX = 0.0;
+float old_accY = 0.0;
+float old_accZ = 0.0;
+float vx = 0.0;
+float vy = 0.0;
+float vz = 0.0;
+void loop()
+{
+
+  if (!reconnect())
+  {
+    return;
+  }
+
+  if (!tb.connected())
+  {
+    Serial.printf("Connecting to: (%s) with token (%s)\n", THINGSBOARD_SERVER, TOKEN);
+    if (!tb.connect(THINGSBOARD_SERVER, TOKEN, THINGSBOARD_PORT))
+    {
+      Serial.println("Failed to connect");
+      return;
+    }
+  };
+
+  // mag.getEvent(&magEvent);
+  accel.getEvent(&accelEvent);
+
+  // lng += 0.00001;
+  // lat += 0.00001;
+  // magX += 1;
+  // magY += 1;
+  // magZ += 1;
+  // old_accX = accX;
+  // old_accY = accY;
+  // old_accZ = accZ;
+
+  accX = accelEvent.acceleration.x;
+  accY = accelEvent.acceleration.y;
+  accZ = accelEvent.acceleration.z;
+
+  // vx = vx + (accX) * 0.01;
+  // vy = vy + (accY) * 0.01;
+  // vz = vz + (accZ) / 2.0 * 0.01;
+
+  Serial.print("X: "); Serial.print(accX); Serial.print("  ");
+  Serial.print("    Y: "); Serial.print(accY); Serial.print("  ");
+  Serial.print("    Z: "); Serial.print(accZ); Serial.print("  ");Serial.println("m/s^2 ");
+  // publishData(&lng, &lat, &magX, &magY, &magZ, &accX, &accY, &accZ);
+  tb.loop();
+  delay(10);
+}
