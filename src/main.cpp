@@ -55,6 +55,7 @@ constexpr char COLLECTOR_KEY_MAG_Z[] = "magZ";
 U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
 Adafruit_LSM303_Mag_Unified mag = Adafruit_LSM303_Mag_Unified(54321);
 Adafruit_LSM303_Accel_Unified accel = Adafruit_LSM303_Accel_Unified(12345);
+
 // GPRS
 HardwareSerial hardware(2);
 TinyGPSPlus gps;
@@ -167,7 +168,7 @@ void setup() {
     Wire.begin(SDA, SCK);    
     delay(1000);
     
-    InitWiFi();
+    // InitWiFi();
 
     xI2CSemaphore = xSemaphoreCreateMutex();    
    
@@ -176,11 +177,11 @@ void setup() {
     xTaskCreatePinnedToCore(Task_ReadSensor, "Task_ReadSensor", 4096, NULL, 1, &TaskHandle_ReadSensor, 0);
     vTaskSuspend(TaskHandle_ReadSensor);
 
-    xTaskCreatePinnedToCore(Task_CheckConnection, "Task_CheckConnection", 2048, NULL, 2, &TaskHandle_CheckConnection, 0);
-    vTaskSuspend(TaskHandle_CheckConnection);
+    // xTaskCreatePinnedToCore(Task_CheckConnection, "Task_CheckConnection", 2048, NULL, 2, &TaskHandle_CheckConnection, 0);
+    // vTaskSuspend(TaskHandle_CheckConnection);
 
-    xTaskCreatePinnedToCore(Task_SendData, "Task_SendData", 2048, NULL, 3, &TaskHandle_SendData, 0);    
-    vTaskSuspend(TaskHandle_SendData);
+    // xTaskCreatePinnedToCore(Task_SendData, "Task_SendData", 2048, NULL, 3, &TaskHandle_SendData, 0);    
+    // vTaskSuspend(TaskHandle_SendData);
 
     xTaskCreatePinnedToCore(Task_ReadGPS, "Task_ReadGPS", 1024, NULL, 4, &TaskHandle_ReadGPS, 0);
     vTaskSuspend(TaskHandle_ReadGPS);
