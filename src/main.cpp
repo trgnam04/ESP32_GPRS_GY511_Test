@@ -1,106 +1,122 @@
-#include <Wire.h>
+#include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
-#include <Adafruit_ADXL345_U.h>
-#include <Adafruit_L3GD20_U.h>
-#include <Adafruit_HMC5883_U.h>
-#include <SPI.h>
+#include <Wire.h>
 
-#define SDA GPIO_NUM_21
-#define SCL GPIO_NUM_22
+Adafruit_MPU6050 mpu;
 
-Adafruit_ADXL345_Unified accel = Adafruit_ADXL345_Unified(12345);
-Adafruit_L3GD20_Unified gyro = Adafruit_L3GD20_Unified(54321);
-
-
-void acc_displayRange(void);
-
-void acc_init();
-void gyro_init();
-void mag_init();
-
-void setup(void)
-{
+void setup(void) {
   Serial.begin(9600);
-  Wire.begin();
+  while (!Serial)
+    delay(10); // will pause Zero, Leonardo, etc until serial console opens
 
-  // acc_init();
-  gyro_init();
-  mag_init();
+  Serial.println("Adafruit MPU6050 test!");
+
+  // Try to initialize!
+  if (!mpu.begin()) {
+    Serial.println("Failed to find MPU6050 chip");
+    while (1) {
+      delay(10);
+    }
+  }
+  Serial.println("MPU6050 Found!");
+
+  mpu.setAccelerometerRange(MPU6050_RANGE_2_G);
+  Serial.print("Accelerometer range set to: ");
+  switch (mpu.getAccelerometerRange()) {
+  case MPU6050_RANGE_2_G:
+    Serial.println("+-2G");
+    break;
+  case MPU6050_RANGE_4_G:
+    Serial.println("+-4G");
+    break;
+  case MPU6050_RANGE_8_G:
+    Serial.println("+-8G");
+    break;
+  case MPU6050_RANGE_16_G:
+    Serial.println("+-16G");
+    break;
+  }
+  mpu.setGyroRange(MPU6050_RANGE_250_DEG);
+  Serial.print("Gyro range set to: ");
+  switch (mpu.getGyroRange()) {
+  case MPU6050_RANGE_250_DEG:
+    Serial.println("+- 250 deg/s");
+    break;
+  case MPU6050_RANGE_500_DEG:
+    Serial.println("+- 500 deg/s");
+    break;
+  case MPU6050_RANGE_1000_DEG:
+    Serial.println("+- 1000 deg/s");
+    break;
+  case MPU6050_RANGE_2000_DEG:
+    Serial.println("+- 2000 deg/s");
+    break;
+  }
+
+  mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+  Serial.print("Filter bandwidth set to: ");
+  switch (mpu.getFilterBandwidth()) {
+  case MPU6050_BAND_260_HZ:
+    Serial.println("260 Hz");
+    break;
+  case MPU6050_BAND_184_HZ:
+    Serial.println("184 Hz");
+    break;
+  case MPU6050_BAND_94_HZ:
+    Serial.println("94 Hz");
+    break;
+  case MPU6050_BAND_44_HZ:
+    Serial.println("44 Hz");
+    break;
+  case MPU6050_BAND_21_HZ:
+    Serial.println("21 Hz");
+    break;
+  case MPU6050_BAND_10_HZ:
+    Serial.println("10 Hz");
+    break;
+  case MPU6050_BAND_5_HZ:
+    Serial.println("5 Hz");
+    break;
+  }
+
+  Serial.println("");
+  delay(100);
 }
+sensors_event_t a, g, temp;
+void loop() {
 
-void loop(void)
-{
-  /* Get a new sensor event */
-  sensors_event_t e_acc, e_gyro, e_mag;
-  accel.getEvent(&e_acc);
-  gyro.getEvent(&e_gyro);
+  /* Get new sensor events with the readings */
+  
+  mpu.getEvent(&a, &g, &temp);
 
-  /* Display the results (acceleration is measured in m/s^2) */
-  Serial.print("X: "); Serial.print(e_acc.acceleration.x); Serial.print("  ");
-  Serial.print("Y: "); Serial.print(e_acc.acceleration.y); Serial.print("  ");
-  Serial.print("Z: "); Serial.print(e_acc.acceleration.z); Serial.print("  ");Serial.println("m/s^2 ");
+  /* Print out the values */
+  // Serial.print("Acceleration X: ");
+  // Serial.print(a.acceleration.x);
+  // Serial.print("\t Y: ");
+  // Serial.print(a.acceleration.y);
+  // Serial.print("\t Z: ");
+  // Serial.print(a.acceleration.z);
+  // Serial.println(" m/s^2");
 
-  Serial.print("X: "); Serial.print(e_gyro.gyro.x); Serial.print("  ");
-  Serial.print("Y: "); Serial.print(e_gyro.gyro.y); Serial.print("  ");
-  Serial.print("Z: "); Serial.print(e_gyro.gyro.z); Serial.print("  ");Serial.println("rad/s ");
+  // Serial.print("Rotation X: ");
+  // Serial.print(g.gyro.x);
+  // Serial.print("\t Y: ");
+  // Serial.print(g.gyro.y);
+  // Serial.print("\t Z: ");
+  // Serial.print(g.gyro.z);
+  // Serial.println(" rad/s");
 
-  delay(500);
+  Serial.print(a.acceleration.x);
+  Serial.print("\t");
+  Serial.print(a.acceleration.y);
+  Serial.print("\t");
+  Serial.print(a.acceleration.z);
+
+  Serial.print("\t");
+  Serial.print(g.gyro.x);
+  Serial.print("\t");
+  Serial.print(g.gyro.y);
+  Serial.print("\t");
+  Serial.println(g.gyro.z);
+  delay(50);
 }
-
-
-void acc_init(){
-  Serial.println("Accelerator Test"); Serial.println("");
-  if(!accel.begin())
-  {
-    /* There was a problem detecting the ADXL343 ... check your connections */
-    Serial.println("Ooops, no ADXL345 detected ... Check your wiring!");
-    while(1);
-  };
-  // accel.setRange(ADXL343_RANGE_16_G);
-  // accel.setRange(ADXL343_RANGE_8_G);
-  // accel.setRange(ADXL343_RANGE_4_G);
-  accel.setRange(ADXL345_RANGE_2_G);
-  acc_displayRange();
-};
-void acc_displayRange(void)
-{
-  Serial.print  ("Range:         +/- "); 
-  
-  switch(accel.getRange())
-  {
-    case ADXL345_RANGE_16_G:
-      Serial.print  ("16 "); 
-      break;
-    case ADXL345_RANGE_8_G:
-      Serial.print  ("8 "); 
-      break;
-    case ADXL345_RANGE_4_G:
-      Serial.print  ("4 "); 
-      break;
-    case ADXL345_RANGE_2_G:
-      Serial.print  ("2 "); 
-      break;
-    default:
-      Serial.print  ("?? "); 
-      break;
-  }  
-  Serial.println(" g");  
-}
-
-void gyro_init(){
-  Serial.println("Gyroscope Test"); Serial.println("");
-  
-  /* Enable auto-ranging */
-  gyro.enableAutoRange(true);
-  
-  /* Initialise the sensor */
-  if(!gyro.begin())
-  {
-    /* There was a problem detecting the L3GD20 ... check your connections */
-    Serial.println("Ooops, no L3GD20 detected ... Check your wiring!");
-    while(1);
-  };
-};
-void mag_init(){
-
-};
