@@ -53,7 +53,7 @@ void setup(void) {
     break;
   }
 
-  mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+  mpu.setFilterBandwidth(MPU6050_BAND_94_HZ);
   Serial.print("Filter bandwidth set to: ");
   switch (mpu.getFilterBandwidth()) {
   case MPU6050_BAND_260_HZ:
@@ -83,40 +83,103 @@ void setup(void) {
   delay(100);
 }
 sensors_event_t a, g, temp;
+float ax, ay, az, gx, gy, gz;
+
+static unsigned long taskMillis = 0;
+const long taskInterval = 50;
+unsigned long currentMillis = 0;
+
+const float dt = 50.0/1000.0;
+const float alpha = 0.98;
+const float GRAVITY = 9.81;
+float prev_ax, prev_ay, prev_az;
+
+float roll, pitch; // after complementary with ax, ay, az
+float alpha_complementary = 0.98;
+
+float ax_filtered = 0.0;
+float ay_filtered = 0.0;
+float az_filtered = 0.0;
+
+float vx = 0.0;
+float vy = 0.0;
+float vz = 0.0;
+
+float l_o = 0.0f;
+float l_f = 0.0f;
+
+// ax       ay      az      gx      gy      gz
+// 0.79    -0.19   9.33    -0.01   0.02    0.00
 void loop() {
-
-  /* Get new sensor events with the readings */
-  
+  // Get data
   mpu.getEvent(&a, &g, &temp);
+  currentMillis = millis();
 
-  /* Print out the values */
-  // Serial.print("Acceleration X: ");
-  // Serial.print(a.acceleration.x);
-  // Serial.print("\t Y: ");
-  // Serial.print(a.acceleration.y);
-  // Serial.print("\t Z: ");
-  // Serial.print(a.acceleration.z);
-  // Serial.println(" m/s^2");
+  ax = a.acceleration.x - 0.79;
+  ay = a.acceleration.y + 0.19;
+  az = a.acceleration.z + 0.48;
+  gx = g.gyro.x + 0.01;
+  gy = g.gyro.y - 0.02;
+  gz = g.gyro.z;
 
-  // Serial.print("Rotation X: ");
-  // Serial.print(g.gyro.x);
-  // Serial.print("\t Y: ");
-  // Serial.print(g.gyro.y);
-  // Serial.print("\t Z: ");
-  // Serial.print(g.gyro.z);
-  // Serial.println(" rad/s");
+  if (currentMillis - taskMillis >= taskInterval) {
+    taskMillis = currentMillis;
 
-  Serial.print(a.acceleration.x);
-  Serial.print("\t");
-  Serial.print(a.acceleration.y);
-  Serial.print("\t");
-  Serial.print(a.acceleration.z);
+    // 3) Estimate orientation
+  // (a) Get pitch/roll from accel (in radians)
+  float accelRoll  = atan2(ay, sqrt(ax*ax + az*az));
+  float accelPitch = atan2(-ax, sqrt(ay*ay + az*az));
 
-  Serial.print("\t");
-  Serial.print(g.gyro.x);
-  Serial.print("\t");
-  Serial.print(g.gyro.y);
-  Serial.print("\t");
-  Serial.println(g.gyro.z);
-  delay(50);
+  // (b) Integrate gyro angles 
+  roll  += gx * dt;
+  pitch += gy * dt;
+  // yaw   += gz * dt;  // won't be stable w/o magnetometer
+
+  // (c) Simple complementary filter
+  float alpha = 0.98f;
+  roll  = alpha * roll  + (1 - alpha) * (accelRoll  ); 
+  pitch = alpha * pitch + (1 - alpha) * (accelPitch );
+
+  // 4) Gravity compensation (naive approach, small angles)
+  float rollRad  = roll  ;
+  float pitchRad = pitch ;
+
+  // Rotate gravity (0, 0, +GRAVITY) in sensor frame
+  float gx_comp = sin(pitchRad) * GRAVITY * -1.0f;                          // X comp
+  float gy_comp = -cos(pitchRad) * sin(rollRad) * GRAVITY * -1.0f;          // Y comp
+  float gz_comp = -cos(pitchRad) * cos(rollRad) * GRAVITY * -1.0f;          // Z comp
+
+  float ax_linear = ax - gx_comp;
+  float ay_linear = ay - gy_comp;
+  float az_linear = az - gz_comp;
+
+  // 5) Filter the linear acceleration
+  float beta = 0.6f; // tune
+  ax_filtered = beta * ax_filtered + (1.0f - beta) * ax_linear;
+  ay_filtered = beta * ay_filtered + (1.0f - beta) * ay_linear;
+  az_filtered = beta * az_filtered + (1.0f - beta) * az_linear;
+
+  // 6) Integrate to get velocity
+  vx += ax_filtered * dt;
+  vy += ay_filtered * dt;
+  // vz += az_filtered * dt;
+
+  // && abs(az_filtered)<0.05 && 
+  // abs(gx)<some_threshold && abs(gy)<some_threshold && abs(gz)<some_threshold
+  // Optional: Zero Velocity Update if near-stationary
+  if (abs(ax_filtered) < 0.2 && abs(ay_filtered) < 0.2 || abs(ax_linear) < 0.2 && abs(ay_linear) < 0.2) {
+    // ax_filtered = ay_filtered = 0.0f;
+    vx = vy = vz = 0.0f;
+  };
+    l_o = (l_o + abs(ax_linear))/2.0f;
+    l_f = (l_f + abs(ax_filtered))/2.0f;
+        // Plot
+    Serial.print(ax_filtered); Serial.print("\t"); Serial.print(ay_filtered); Serial.print("\t"); Serial.print(l_o); Serial.print("\t");
+    // Serial.print(gx); Serial.print("\t"); Serial.print(gy); Serial.print("\t"); Serial.println(gz);
+    // Serial.print(ax_filtered); Serial.print("\t"); Serial.print(ay_filtered); Serial.print("\t"); Serial.println(l_f);
+    Serial.print(vx); Serial.print("\t"); Serial.print(vy); Serial.print("\t"); Serial.println(vz);
+    // Serial.print(offset_ax); Serial.print("\t"); Serial.print(offset_ay); Serial.print("\t"); Serial.print(offset_az); Serial.print("\t");
+    // Serial.print(offset_gx); Serial.print("\t"); Serial.print(offset_gy); Serial.print("\t"); Serial.println(offset_gz);
+    // Serial.print(ax); Serial.print("\t"); Serial.print(ay); Serial.print("\t"); Serial.println(vz);
+  };
 }

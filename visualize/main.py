@@ -47,15 +47,15 @@ def main():
 
     # Accelerometer plot
     ax1.set_title('Accelerometer (X, Y, Z)')
-    ax1.set_ylim(-10, 10)
+    ax1.set_ylim(-15, 15)
     ax1.set_xlim(0, max_len)
     accel_lines = [ax1.plot(range(max_len), accel_data[i])[0] for i in range(3)]
 
     # Gyroscope plot
-    ax2.set_title('Gyroscope (X, Y, Z)')
-    ax2.set_ylim(-10, 10)
+    ax2.set_title('Velocity (X, Y, Z)')
+    ax2.set_ylim(-15, 15)
     ax2.set_xlim(0, max_len)
-    gyro_lines = [ax2.plot(range(max_len), gyro_data[i])[0] for i in range(3)]
+    gyro_lines = [ax2.plot(range(max_len), gyro_data[i])[0] for i in range(2)]
 
     ani = animation.FuncAnimation(fig, update_plot, fargs=(ser, accel_lines, gyro_lines, accel_data, gyro_data),
                                   interval=25, blit=True)
