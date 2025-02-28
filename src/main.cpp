@@ -187,7 +187,7 @@ void setup() {
    
 
     // Tăng stack lên 4096 tránh lỗi reset
-    xTaskCreatePinnedToCore(Task_ReadSensor, "Task_ReadSensor", 4096, NULL, 1, &TaskHandle_ReadSensor, 0);
+    xTaskCreatePinnedToCore(Task_ReadSensor, "Task_ReadSensor", 4096, NULL, 1, &TaskHandle_ReadSensor, 1);
     // vTaskSuspend(TaskHandle_ReadSensor);
 
     // xTaskCreatePinnedToCore(Task_CheckConnection, "Task_CheckConnection", 2048, NULL, 2, &TaskHandle_CheckConnection, 0);
@@ -196,9 +196,9 @@ void setup() {
     // xTaskCreatePinnedToCore(Task_SendData, "Task_SendData", 2048, NULL, 3, &TaskHandle_SendData, 0);    
     // vTaskSuspend(TaskHandle_SendData);
 
-    xTaskCreatePinnedToCore(Task_ReadGPS, "Task_ReadGPS", 1024, NULL, 1, &TaskHandle_ReadGPS, 0);    
+    xTaskCreatePinnedToCore(Task_ReadGPS, "Task_ReadGPS", 1024, NULL, 1, &TaskHandle_ReadGPS, 1);    
     
-    xTaskCreatePinnedToCore(Task_Debug, "Task_Debug", 1024, NULL, 4, NULL, 0);
+    // xTaskCreatePinnedToCore(Task_Debug, "Task_Debug", 1024, NULL, 4, NULL, 0);
     
     // xTaskCreatePinnedToCore(Task_MenuProcess, "Task_MenuProcess", 2048, NULL, 1, &TaskHandle_MenuProcess, 1);    
     // xTaskCreatePinnedToCore(Task_ReadRotaryEncoder, "Task_ReadRotary", 1024, NULL, 2, &TaskHandle_ReadRotary, 1);
@@ -491,18 +491,11 @@ void Task_ReadSensor(void* pvParameters)
     sensors_event_t eventMag;
     sensors_event_t eventAccel;         
     
-    while(1){                
-        /* Display the results (acceleration is measured in m/s^2) */                                
-        // if(hardware.available() > 0){                     
-        //     gps.encode(hardware.read());                   
-        //     if(gps.location.isValid()){
-        //         Sensor_Data.lat = gps.location.lat();
-        //         Sensor_Data.lng = gps.location.lng();    
-        //     }            
-        //     // else{
-        //     //     Serial.println("INVALID");
-        //     // }
-        // }      
+    while(1){                        
+        if(gps.location.isUpdated()){
+            Sensor_Data.lat = gps.location.lat();
+            Sensor_Data.lng = gps.location.lng();    
+        }                    
         if (xSemaphoreTake(xI2CSemaphore, portMAX_DELAY)){                    
             accel.getEvent(&eventAccel);
             mag.getEvent(&eventMag);            
@@ -520,8 +513,10 @@ void Task_ReadSensor(void* pvParameters)
             convertData();        
             xSemaphoreGive(xI2CSemaphore);
         }
+
+        Serial.println(buffer);
         
-        vTaskDelayUntil(&xLastWakeTime, 500);
+        vTaskDelayUntil(&xLastWakeTime, 1000);
         /* Delay before the next sample */        
     }
 }
@@ -586,15 +581,8 @@ void Task_ReadRotaryEncoder(void* pvParameters){
 
 void Task_ReadGPS(void* pvParameters){
     while(1){
-        if(hardware.available() > 0){                     
-            gps.encode(hardware.read());                   
-            if(gps.location.isValid()){
-                Sensor_Data.lat = gps.location.lat();
-                Sensor_Data.lng = gps.location.lng();    
-            }            
-            else{
-                Serial.println("INVALID");
-            }
+        while(hardware.available()){                     
+            gps.encode(hardware.read());                               
         }        
         vTaskDelay(10);
     }
