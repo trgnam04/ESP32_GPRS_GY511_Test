@@ -17,8 +17,8 @@
 #define RX_PIN 16
 #define SDA 21
 #define SCK 22
-#define MQTT    1
-#undef  HTTP
+#undef MQTT    
+#define HTTP   1
 
 SemaphoreHandle_t xI2CSemaphore;
 
@@ -123,7 +123,7 @@ void Task_CheckConnection(void* pvParameters);
 void Task_MenuProcess(void* pvParameters);
 void Task_ReadRotaryEncoder(void* pvParameters);
 void Task_ReadGPS(void* pvParameters);
-
+void Task_Debug(void* pvParameters);
 
 typedef enum{
     STATE_IDLE_MENU,
@@ -169,13 +169,26 @@ void setup() {
     delay(1000);
     
     // InitWiFi();
+    // while(1){
+    //     if (gps.satellites.isValid()) {
+    //         Serial.print("Satellites: ");
+    //         Serial.println(gps.satellites.value());
+    //         break;
+    //     } else {
+    //     Serial.println("Waiting for satellite lock...");
+    //     }
+    //     delay(500);
+    // }
+    delay(5000);
+    
+    
 
     xI2CSemaphore = xSemaphoreCreateMutex();    
    
 
     // Tăng stack lên 4096 tránh lỗi reset
     xTaskCreatePinnedToCore(Task_ReadSensor, "Task_ReadSensor", 4096, NULL, 1, &TaskHandle_ReadSensor, 0);
-    vTaskSuspend(TaskHandle_ReadSensor);
+    // vTaskSuspend(TaskHandle_ReadSensor);
 
     // xTaskCreatePinnedToCore(Task_CheckConnection, "Task_CheckConnection", 2048, NULL, 2, &TaskHandle_CheckConnection, 0);
     // vTaskSuspend(TaskHandle_CheckConnection);
@@ -183,17 +196,13 @@ void setup() {
     // xTaskCreatePinnedToCore(Task_SendData, "Task_SendData", 2048, NULL, 3, &TaskHandle_SendData, 0);    
     // vTaskSuspend(TaskHandle_SendData);
 
-    xTaskCreatePinnedToCore(Task_ReadGPS, "Task_ReadGPS", 1024, NULL, 4, &TaskHandle_ReadGPS, 0);
-    vTaskSuspend(TaskHandle_ReadGPS);
+    xTaskCreatePinnedToCore(Task_ReadGPS, "Task_ReadGPS", 1024, NULL, 1, &TaskHandle_ReadGPS, 0);    
     
-    xTaskCreatePinnedToCore(Task_MenuProcess, "Task_MenuProcess", 2048, NULL, 1, &TaskHandle_MenuProcess, 1);    
-    xTaskCreatePinnedToCore(Task_ReadRotaryEncoder, "Task_ReadRotary", 1024, NULL, 2, &TaskHandle_ReadRotary, 1);
+    xTaskCreatePinnedToCore(Task_Debug, "Task_Debug", 1024, NULL, 4, NULL, 0);
     
-    delay(5000);
-    vTaskResume(TaskHandle_ReadSensor);
-    vTaskResume(TaskHandle_CheckConnection);
-    vTaskResume(TaskHandle_SendData);
-    vTaskResume(TaskHandle_ReadGPS);
+    // xTaskCreatePinnedToCore(Task_MenuProcess, "Task_MenuProcess", 2048, NULL, 1, &TaskHandle_MenuProcess, 1);    
+    // xTaskCreatePinnedToCore(Task_ReadRotaryEncoder, "Task_ReadRotary", 1024, NULL, 2, &TaskHandle_ReadRotary, 1);
+        
 }
 
 void loop() {
@@ -229,7 +238,8 @@ bool reconnect() {
 
 void convertData(void){
 #ifdef HTTP
-  snprintf(buffer, 100, "%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f", Magx, Magy, Magz, Ax, Ay, Az, lat, lng);
+  snprintf(buffer, 100, "%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f", Sensor_Data.Magx, Sensor_Data.Magy, Sensor_Data.Magz, Sensor_Data.Ax,
+    Sensor_Data.Ay, Sensor_Data.Az, Sensor_Data.lat, Sensor_Data.lng);
 #endif
 #ifdef MQTT    
     data[COLLECTOR_KEY_TRIP_NUMBER] = Sensor_Data.trip_number;
@@ -483,6 +493,16 @@ void Task_ReadSensor(void* pvParameters)
     
     while(1){                
         /* Display the results (acceleration is measured in m/s^2) */                                
+        // if(hardware.available() > 0){                     
+        //     gps.encode(hardware.read());                   
+        //     if(gps.location.isValid()){
+        //         Sensor_Data.lat = gps.location.lat();
+        //         Sensor_Data.lng = gps.location.lng();    
+        //     }            
+        //     // else{
+        //     //     Serial.println("INVALID");
+        //     // }
+        // }      
         if (xSemaphoreTake(xI2CSemaphore, portMAX_DELAY)){                    
             accel.getEvent(&eventAccel);
             mag.getEvent(&eventMag);            
@@ -577,5 +597,12 @@ void Task_ReadGPS(void* pvParameters){
             }
         }        
         vTaskDelay(10);
+    }
+}
+
+void Task_Debug(void* pvParameters){
+    for(;;){
+        Serial.println(buffer);
+        vTaskDelay(500);
     }
 }
