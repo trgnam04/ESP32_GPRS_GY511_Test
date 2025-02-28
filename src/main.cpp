@@ -1,119 +1,161 @@
 #include <TinyGPSPlus.h>
-#include <Arduino.h>
-#define TX_PIN 17
-#define RX_PIN 16
-#define GPS_BRATE 9600
-#define FREQUENCY 1
-HardwareSerial hardware(2);
+#include <SoftwareSerial.h>
+/*
+   This sample code demonstrates the normal use of a TinyGPSPlus (TinyGPSPlus) object.
+   It requires the use of SoftwareSerial, and assumes that you have a
+   4800-baud serial GPS device hooked up on pins 4(rx) and 3(tx).
+*/
+static const int RXPin = 17, TXPin = 18;
+static const uint32_t GPSBaud = 9600;
+
+// The TinyGPSPlus object
 TinyGPSPlus gps;
-xSemaphoreHandle xMutex;
-void displayInfo();
-char information[20];
-void Task_Display(void* pvParameters);
-void Task_Serial(void* pvParameters);
-void convertData(void);
 
+// The serial connection to the GPS device
+SoftwareSerial ss(RXPin, TXPin);
 
-double lat;
-double lng;
-char buffer[20];
-
-void setup() {
-  // put your setup code here, to run once:
-  xMutex = xSemaphoreCreateBinary();
-  if(xMutex != NULL){
-      xSemaphoreGive(xMutex);
-  }
-  Serial.begin(115200);
-  hardware.begin(9600);
-  xTaskCreatePinnedToCore(Task_Display, "Task_Test_Mag_Sensor", 4096, NULL, 1, NULL, 1);
-  xTaskCreatePinnedToCore(Task_Serial, "Task_Test_LCD", 4096, NULL, 1, NULL, 0);
+// This custom version of delay() ensures that the gps object
+// is being "fed".
+static void smartDelay(unsigned long ms)
+{
+  unsigned long start = millis();
+  do 
+  {
+    while (ss.available())
+      gps.encode(ss.read());
+  } while (millis() - start < ms);
 }
+
+static void printFloat(float val, bool valid, int len, int prec)
+{
+  if (!valid)
+  {
+    while (len-- > 1)
+      Serial.print('*');
+    Serial.print(' ');
+  }
+  else
+  {
+    Serial.print(val, prec);
+    int vi = abs((int)val);
+    int flen = prec + (val < 0.0 ? 2 : 1); // . and -
+    flen += vi >= 1000 ? 4 : vi >= 100 ? 3 : vi >= 10 ? 2 : 1;
+    for (int i=flen; i<len; ++i)
+      Serial.print(' ');
+  }
+  smartDelay(0);
+}
+
+static void printInt(unsigned long val, bool valid, int len)
+{
+  char sz[32] = "*****************";
+  if (valid)
+    sprintf(sz, "%ld", val);
+  sz[len] = 0;
+  for (int i=strlen(sz); i<len; ++i)
+    sz[i] = ' ';
+  if (len > 0) 
+    sz[len-1] = ' ';
+  Serial.print(sz);
+  smartDelay(0);
+}
+
+static void printDateTime(TinyGPSDate &d, TinyGPSTime &t)
+{
+  if (!d.isValid())
+  {
+    Serial.print(F("********** "));
+  }
+  else
+  {
+    char sz[32];
+    sprintf(sz, "%02d/%02d/%02d ", d.month(), d.day(), d.year());
+    Serial.print(sz);
+  }
+  
+  if (!t.isValid())
+  {
+    Serial.print(F("******** "));
+  }
+  else
+  {
+    char sz[32];
+    sprintf(sz, "%02d:%02d:%02d ", t.hour(), t.minute(), t.second());
+    Serial.print(sz);
+  }
+
+  printInt(d.age(), d.isValid(), 5);
+  smartDelay(0);
+}
+
+static void printStr(const char *str, int len)
+{
+  int slen = strlen(str);
+  for (int i=0; i<len; ++i)
+    Serial.print(i<slen ? str[i] : ' ');
+  smartDelay(0);
+}
+
+
+void setup()
+{
+  Serial.begin(9600);
+  ss.begin(GPSBaud);
+
+  Serial.println(F("FullExample.ino"));
+  Serial.println(F("An extensive example of many interesting TinyGPSPlus features"));
+  Serial.print(F("Testing TinyGPSPlus library v. ")); Serial.println(TinyGPSPlus::libraryVersion());
+  Serial.println(F("by Mikal Hart"));
+  Serial.println();
+  Serial.println(F("Sats HDOP  Latitude   Longitude   Fix  Date       Time     Date Alt    Course Speed Card  Distance Course Card  Chars Sentences Checksum"));
+  Serial.println(F("           (deg)      (deg)       Age                      Age  (m)    --- from GPS ----  ---- to London  ----  RX    RX        Fail"));
+  Serial.println(F("----------------------------------------------------------------------------------------------------------------------------------------"));
+}
+
 void loop()
 {
-}
+  static const double LONDON_LAT = 51.508131, LONDON_LON = -0.128002;
 
-void convertData(void){
-  snprintf(buffer, 20, "%.6f;%.6f", lat, lng);
-}
+  printInt(gps.satellites.value(), gps.satellites.isValid(), 5);
+  printFloat(gps.hdop.hdop(), gps.hdop.isValid(), 6, 1);
+  printFloat(gps.location.lat(), gps.location.isValid(), 11, 6);
+  printFloat(gps.location.lng(), gps.location.isValid(), 12, 6);
+  printInt(gps.location.age(), gps.location.isValid(), 5);
+  printDateTime(gps.date, gps.time);
+  printFloat(gps.altitude.meters(), gps.altitude.isValid(), 7, 2);
+  printFloat(gps.course.deg(), gps.course.isValid(), 7, 2);
+  printFloat(gps.speed.kmph(), gps.speed.isValid(), 6, 2);
+  printStr(gps.course.isValid() ? TinyGPSPlus::cardinal(gps.course.deg()) : "*** ", 6);
 
-void displayInfo()
-{
-  convertData();
-  Serial.print(buffer);
-  // Serial.print(F("Location: ")); 
-  // if (gps.location.isValid())
-  // {
-  //   lat = gps.location.lat();
-  //   lng = gps.location.lng();
-  //   Serial.print(lat, 6);
-  //   Serial.print(F(","));
-  //   Serial.print(lng, 6);
-    
-  // }
-  // else
-  // {
-  //   Serial.print(F("INVALID"));
-  // }
+  unsigned long distanceKmToLondon =
+    (unsigned long)TinyGPSPlus::distanceBetween(
+      gps.location.lat(),
+      gps.location.lng(),
+      LONDON_LAT, 
+      LONDON_LON) / 1000;
+  printInt(distanceKmToLondon, gps.location.isValid(), 9);
 
-  // Serial.print(F("  Date/Time: "));
-  // if (gps.date.isValid())
-  // {
-  //   Serial.print(gps.date.month());
-  //   Serial.print(F("/"));
-  //   Serial.print(gps.date.day());
-  //   Serial.print(F("/"));
-  //   Serial.print(gps.date.year());
-  // }
-  // else
-  // {
-  //   Serial.print(F("INVALID"));
-  // }
+  double courseToLondon =
+    TinyGPSPlus::courseTo(
+      gps.location.lat(),
+      gps.location.lng(),
+      LONDON_LAT, 
+      LONDON_LON);
 
-  // Serial.print(F(" "));
-  // if (gps.time.isValid())
-  // {
-  //   if (gps.time.hour() < 10) Serial.print(F("0"));
-  //   Serial.print(gps.time.hour());
-  //   Serial.print(F(":"));
-  //   if (gps.time.minute() < 10) Serial.print(F("0"));
-  //   Serial.print(gps.time.minute());
-  //   Serial.print(F(":"));
-  //   if (gps.time.second() < 10) Serial.print(F("0"));
-  //   Serial.print(gps.time.second());
-  //   Serial.print(F("."));
-  //   if (gps.time.centisecond() < 10) Serial.print(F("0"));
-  //   Serial.print(gps.time.centisecond());
-  // }
-  // else
-  // {
-  //   Serial.print(F("INVALID"));
-  // }
+  printFloat(courseToLondon, gps.location.isValid(), 7, 2);
 
+  const char *cardinalToLondon = TinyGPSPlus::cardinal(courseToLondon);
+
+  printStr(gps.location.isValid() ? cardinalToLondon : "*** ", 6);
+
+  printInt(gps.charsProcessed(), true, 6);
+  printInt(gps.sentencesWithFix(), true, 10);
+  printInt(gps.failedChecksum(), true, 9);
   Serial.println();
+  
+  smartDelay(1000);
+
+  if (millis() > 5000 && gps.charsProcessed() < 10)
+    Serial.println(F("No GPS data received: check wiring"));
 }
-void Task_Display(void* pvParameters)
-{
-    while(1){                
-        Serial.print(millis());
-        /* Delay before the next sample */
-        if(xSemaphoreTake(xMutex, portMAX_DELAY)){
-          displayInfo();
-          xSemaphoreGive(xMutex);
-        }
-        vTaskDelay(1000/FREQUENCY - 2);
-        
-    }
-}
-void Task_Serial(void* pvParameters)
-{
-    while(1){                
-      if(hardware.available() > 0){
-        if(xSemaphoreTake(xMutex, portMAX_DELAY)){
-          gps.encode(hardware.read());
-          xSemaphoreGive(xMutex);
-        }          
-      }
-      vTaskDelay(10);
-    }
-}
+
