@@ -11,10 +11,11 @@
 #include <WiFi.h>
 #include <Server_Side_RPC.h>
 #include <rotary_encoder.h>
+#include <SoftwareSerial.h>
 
 #define SERIAL_BAUDRATE 9600
-#define TX_PIN 17
-#define RX_PIN 16
+#define TX_PIN 18
+#define RX_PIN 17
 #define SDA 21
 #define SCK 22
 #undef MQTT    
@@ -150,7 +151,7 @@ menu_state_t MenuState = STATE_IDLE_MENU;
 volatile uint16_t tripNumber = 0;
 volatile uint16_t routeID = 0;
 uint16_t screen_tick = 0;
-uint16_t display_tick = 250; // switch screen every 5s
+uint16_t display_tick = 50; // switch screen every 5s
 
 TaskHandle_t TaskHandle_ReadSensor;
 TaskHandle_t TaskHandle_SendData;
@@ -161,12 +162,9 @@ TaskHandle_t TaskHandle_ReadGPS;
 
 
 void setup() {
-    Serial.begin(SERIAL_BAUDRATE);       
-    delay(100);
-    hardware.begin(9600);    
-    delay(100);
-    Wire.begin(SDA, SCK);    
-    delay(1000);
+    Serial.begin(SERIAL_BAUDRATE);           
+    hardware.begin(9600, SERIAL_8N1, RX_PIN, TX_PIN);        
+    Wire.begin(SDA, SCK);        
     
     // InitWiFi();
     // while(1){
@@ -178,8 +176,7 @@ void setup() {
     //     Serial.println("Waiting for satellite lock...");
     //     }
     //     delay(500);
-    // }
-    delay(5000);
+    // }    
     
     
 
@@ -187,7 +184,8 @@ void setup() {
    
 
     // Tăng stack lên 4096 tránh lỗi reset
-    xTaskCreatePinnedToCore(Task_ReadSensor, "Task_ReadSensor", 4096, NULL, 1, &TaskHandle_ReadSensor, 1);
+    xTaskCreatePinnedToCore(Task_ReadSensor, "Task_ReadSensor", 1024 * 4, NULL, 1, &TaskHandle_ReadSensor, 1);
+    vTaskSuspend(TaskHandle_ReadSensor);
     // vTaskSuspend(TaskHandle_ReadSensor);
 
     // xTaskCreatePinnedToCore(Task_CheckConnection, "Task_CheckConnection", 2048, NULL, 2, &TaskHandle_CheckConnection, 0);
@@ -196,12 +194,10 @@ void setup() {
     // xTaskCreatePinnedToCore(Task_SendData, "Task_SendData", 2048, NULL, 3, &TaskHandle_SendData, 0);    
     // vTaskSuspend(TaskHandle_SendData);
 
-    xTaskCreatePinnedToCore(Task_ReadGPS, "Task_ReadGPS", 1024, NULL, 1, &TaskHandle_ReadGPS, 1);    
+    xTaskCreatePinnedToCore(Task_ReadGPS, "Task_ReadGPS", 1024, NULL, 1, &TaskHandle_ReadGPS, 1);            
     
-    // xTaskCreatePinnedToCore(Task_Debug, "Task_Debug", 1024, NULL, 4, NULL, 0);
-    
-    // xTaskCreatePinnedToCore(Task_MenuProcess, "Task_MenuProcess", 2048, NULL, 1, &TaskHandle_MenuProcess, 1);    
-    // xTaskCreatePinnedToCore(Task_ReadRotaryEncoder, "Task_ReadRotary", 1024, NULL, 2, &TaskHandle_ReadRotary, 1);
+    xTaskCreatePinnedToCore(Task_MenuProcess, "Task_MenuProcess", 1024 * 2, NULL, 1, &TaskHandle_MenuProcess, 1);    
+    xTaskCreatePinnedToCore(Task_ReadRotaryEncoder, "Task_ReadRotary", 1024, NULL, 2, &TaskHandle_ReadRotary, 1);
         
 }
 
@@ -428,11 +424,10 @@ void menu_process_fsm(void){
         case STATE_SETTING:{
             setting_process_fsm();
             if(isLongPressed()){
-                SettingState = STATE_IDLE_SETTING;
-                xTaskNotifyGive(TaskHandle_SendData);                                
-                isSending = true;                                                                
+                SettingState = STATE_IDLE_SETTING;                                                                                                                          
                 resetRotaryEncoder();
-                u8g2.clearBuffer();
+                u8g2.clearBuffer();                
+                vTaskResume(TaskHandle_ReadSensor);
                 MenuState = STATE_MEASURING;
             }
             break;
@@ -441,8 +436,9 @@ void menu_process_fsm(void){
             display_process_fsm();
             if(isLongPressed()){
                 flushData();                
-                resetRotaryEncoder();                
-                isSending = false;                                               
+                resetRotaryEncoder();              
+
+                vTaskSuspend(TaskHandle_ReadSensor); 
                 MenuState = STATE_IDLE_MENU;
             }
             break;
@@ -496,6 +492,7 @@ void Task_ReadSensor(void* pvParameters)
             Sensor_Data.lat = gps.location.lat();
             Sensor_Data.lng = gps.location.lng();    
         }                    
+
         if (xSemaphoreTake(xI2CSemaphore, portMAX_DELAY)){                    
             accel.getEvent(&eventAccel);
             mag.getEvent(&eventMag);            
@@ -525,16 +522,9 @@ void Task_ReadSensor(void* pvParameters)
 void Task_SendData(void* pvParameters)
 {
     TickType_t xLastWakeTime = xTaskGetTickCount();  // Cập nhật thời gian trước vòng lặp
-    while(1) {        
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);                            
-        while(isSending) {            
-            if (!isSending) {                
-                xLastWakeTime = xTaskGetTickCount(); 
-                break;
-            }                            
-            tb.sendTelemetryJson(data, data_size);  
-            vTaskDelayUntil(&xLastWakeTime, 1000);
-        }
+    while(1) {                                              
+        tb.sendTelemetryJson(data, data_size);  
+        vTaskDelayUntil(&xLastWakeTime, 1000);        
     }
 }
 
@@ -585,12 +575,5 @@ void Task_ReadGPS(void* pvParameters){
             gps.encode(hardware.read());                               
         }        
         vTaskDelay(10);
-    }
-}
-
-void Task_Debug(void* pvParameters){
-    for(;;){
-        Serial.println(buffer);
-        vTaskDelay(500);
     }
 }
