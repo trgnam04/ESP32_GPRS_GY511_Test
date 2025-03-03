@@ -1,4 +1,4 @@
-// #define CORE_DEBUG_LEVEL 5
+#define CORE_DEBUG_LEVEL 5
 
 #include <TinyGPSPlus.h>
 #include <Arduino.h>
@@ -11,17 +11,19 @@
 #include <WiFi.h>
 #include <Server_Side_RPC.h>
 #include <rotary_encoder.h>
-#include <SoftwareSerial.h>
+#include <Adafruit_MPU6050.h>
+
 
 #define SERIAL_BAUDRATE 9600
 #define TX_PIN 18
 #define RX_PIN 17
 #define SDA 21
 #define SCK 22
-#undef MQTT    
-#define HTTP   1
+#undef HTTP    
+#define MQTT   1
 
 SemaphoreHandle_t xI2CSemaphore;
+QueueHandle_t ServerDataQueue;
 
 
 // set up Wifi
@@ -55,8 +57,7 @@ constexpr char COLLECTOR_KEY_MAG_Z[] = "magZ";
 // Khai báo màn hình OLED SH1106 (I2C)
 U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
 Adafruit_LSM303_Mag_Unified mag = Adafruit_LSM303_Mag_Unified(54321);
-Adafruit_LSM303_Accel_Unified accel = Adafruit_LSM303_Accel_Unified(12345);
-
+Adafruit_MPU6050 mpu;
 // GPRS
 HardwareSerial hardware(2);
 TinyGPSPlus gps;
@@ -161,12 +162,15 @@ TaskHandle_t TaskHandle_ReadRotary;
 TaskHandle_t TaskHandle_ReadGPS;
 
 
+
 void setup() {
     Serial.begin(SERIAL_BAUDRATE);           
     hardware.begin(9600, SERIAL_8N1, RX_PIN, TX_PIN);        
     Wire.begin(SDA, SCK);        
+    ServerDataQueue = xQueueCreate(5, sizeof(sensor_data_t));
+    xI2CSemaphore = xSemaphoreCreateMutex();    
     
-    // InitWiFi();
+    InitWiFi();
     // while(1){
     //     if (gps.satellites.isValid()) {
     //         Serial.print("Satellites: ");
@@ -178,20 +182,18 @@ void setup() {
     //     delay(500);
     // }    
     
-    
-
-    xI2CSemaphore = xSemaphoreCreateMutex();    
+        
    
 
     // Tăng stack lên 4096 tránh lỗi reset
     xTaskCreatePinnedToCore(Task_ReadSensor, "Task_ReadSensor", 1024 * 4, NULL, 1, &TaskHandle_ReadSensor, 1);
-    vTaskSuspend(TaskHandle_ReadSensor);
-    // vTaskSuspend(TaskHandle_ReadSensor);
+    // Chờ cho đến khi quá trình measuring được gọi, mới bắt đầu được thực thi
+    vTaskSuspend(TaskHandle_ReadSensor);    
 
-    // xTaskCreatePinnedToCore(Task_CheckConnection, "Task_CheckConnection", 2048, NULL, 2, &TaskHandle_CheckConnection, 0);
+    xTaskCreatePinnedToCore(Task_CheckConnection, "Task_CheckConnection", 2048, NULL, 2, &TaskHandle_CheckConnection, 0);
     // vTaskSuspend(TaskHandle_CheckConnection);
 
-    // xTaskCreatePinnedToCore(Task_SendData, "Task_SendData", 2048, NULL, 3, &TaskHandle_SendData, 0);    
+    xTaskCreatePinnedToCore(Task_SendData, "Task_SendData", 2048, NULL, 3, &TaskHandle_SendData, 0);    
     // vTaskSuspend(TaskHandle_SendData);
 
     xTaskCreatePinnedToCore(Task_ReadGPS, "Task_ReadGPS", 1024, NULL, 1, &TaskHandle_ReadGPS, 1);            
@@ -249,6 +251,9 @@ void convertData(void){
     data[COLLECTOR_KEY_ACCEL_Y] = Sensor_Data.Ay;
     data[COLLECTOR_KEY_ACCEL_Z] = Sensor_Data.Az;
     data_size = Helper::Measure_Json(data);    
+
+    snprintf(buffer, 100, "%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f", Sensor_Data.Magx, Sensor_Data.Magy, Sensor_Data.Magz, Sensor_Data.Ax,
+        Sensor_Data.Ay, Sensor_Data.Az, Sensor_Data.lat, Sensor_Data.lng);
 #endif
 
 
@@ -268,11 +273,14 @@ void displayNum(float num, int8_t x, int8_t y)
 
 void setupMagSensor(void)
 {
-    if(!mag.begin() || !accel.begin())
+    if(!mag.begin() || !mpu.begin())
     {
         /* There was a problem detecting the ADXL345 ... check your connections */        
         while(1);
     }    
+    mpu.setAccelerometerRange(MPU6050_RANGE_2_G);
+    mpu.setGyroRange(MPU6050_RANGE_250_DEG);
+    mpu.setFilterBandwidth(MPU6050_BAND_94_HZ);
 
 }
 
@@ -433,8 +441,13 @@ void menu_process_fsm(void){
             break;
         }
         case STATE_MEASURING:{
-            display_process_fsm();
+            if(xSemaphoreTake(xI2CSemaphore, portMAX_DELAY)){ 
+                display_process_fsm();
+                xSemaphoreGive(xI2CSemaphore);
+            }
+
             if(isLongPressed()){
+
                 flushData();                
                 resetRotaryEncoder();              
 
@@ -485,16 +498,18 @@ void Task_ReadSensor(void* pvParameters)
     TickType_t xLastWakeTime = xTaskGetTickCount();
     setupMagSensor();
     sensors_event_t eventMag;
+    sensors_event_t eventGyro;
+    sensors_event_t eventTemp;
     sensors_event_t eventAccel;         
     
-    while(1){                        
-        if(gps.location.isUpdated()){
-            Sensor_Data.lat = gps.location.lat();
-            Sensor_Data.lng = gps.location.lng();    
-        }                    
-
+    while(1){                 
+        Serial.println(buffer);               
         if (xSemaphoreTake(xI2CSemaphore, portMAX_DELAY)){                    
-            accel.getEvent(&eventAccel);
+            if(gps.location.isUpdated()){
+                Sensor_Data.lat = gps.location.lat();
+                Sensor_Data.lng = gps.location.lng();    
+            }                    
+            mpu.getEvent(&eventAccel, &eventGyro, &eventTemp);            
             mag.getEvent(&eventMag);            
             
             Sensor_Data.trip_number = tripNumber;
@@ -508,10 +523,9 @@ void Task_ReadSensor(void* pvParameters)
             Sensor_Data.Az = eventAccel.acceleration.z;                                           
 
             convertData();        
+            xQueueSendToBack(ServerDataQueue, &Sensor_Data, portMAX_DELAY);
             xSemaphoreGive(xI2CSemaphore);
-        }
-
-        Serial.println(buffer);
+        }        
         
         vTaskDelayUntil(&xLastWakeTime, 1000);
         /* Delay before the next sample */        
@@ -521,10 +535,11 @@ void Task_ReadSensor(void* pvParameters)
 
 void Task_SendData(void* pvParameters)
 {
-    TickType_t xLastWakeTime = xTaskGetTickCount();  // Cập nhật thời gian trước vòng lặp
-    while(1) {                                              
+    sensor_data_t ReceivedData;
+    while(1) {                 
+        xQueueReceive(ServerDataQueue, &ReceivedData, portMAX_DELAY);  
         tb.sendTelemetryJson(data, data_size);  
-        vTaskDelayUntil(&xLastWakeTime, 1000);        
+        vTaskDelay(10);
     }
 }
 
@@ -551,11 +566,8 @@ void Task_MenuProcess(void* pvParameters)
 {
     u8g2.begin();
     drawStaticMenu();    
-    while(1){        
-        if(xSemaphoreTake(xI2CSemaphore, portMAX_DELAY)){
-            menu_process_fsm();                    
-            xSemaphoreGive(xI2CSemaphore);
-        }   
+    while(1){                
+        menu_process_fsm();                                        
         vTaskDelay(100);     
     }
 }
