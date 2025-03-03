@@ -4,7 +4,6 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
-#include <Adafruit_LSM303_U.h>
 #include <U8g2lib.h>
 #include <ThingsBoard.h>
 #include <Arduino_MQTT_Client.h>
@@ -12,6 +11,7 @@
 #include <Server_Side_RPC.h>
 #include <rotary_encoder.h>
 #include <Adafruit_MPU6050.h>
+#include <Adafruit_HMC5883_U.h>
 
 
 #define SERIAL_BAUDRATE 9600
@@ -56,7 +56,7 @@ constexpr char COLLECTOR_KEY_MAG_Z[] = "magZ";
 
 // Khai báo màn hình OLED SH1106 (I2C)
 U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
-Adafruit_LSM303_Mag_Unified mag = Adafruit_LSM303_Mag_Unified(54321);
+Adafruit_HMC5883_Unified mag = Adafruit_HMC5883_Unified(12345);
 Adafruit_MPU6050 mpu;
 // GPRS
 HardwareSerial hardware(2);
@@ -162,13 +162,20 @@ TaskHandle_t TaskHandle_ReadRotary;
 TaskHandle_t TaskHandle_ReadGPS;
 
 
+sensors_event_t eventMag;
+sensors_event_t eventGyro;
+sensors_event_t eventTemp;
+sensors_event_t eventAccel;         
+
 
 void setup() {
     Serial.begin(SERIAL_BAUDRATE);           
     hardware.begin(9600, SERIAL_8N1, RX_PIN, TX_PIN);        
-    Wire.begin(SDA, SCK);        
+    Wire.begin(SDA, SCK, 100000);        
+    Wire.setClock(100000);
     ServerDataQueue = xQueueCreate(5, sizeof(sensor_data_t));
     xI2CSemaphore = xSemaphoreCreateMutex();    
+    setupMagSensor();    
     
     InitWiFi();
     // while(1){
@@ -495,12 +502,7 @@ void display_process_fsm(void){
 
 void Task_ReadSensor(void* pvParameters)
 {
-    TickType_t xLastWakeTime = xTaskGetTickCount();
-    setupMagSensor();
-    sensors_event_t eventMag;
-    sensors_event_t eventGyro;
-    sensors_event_t eventTemp;
-    sensors_event_t eventAccel;         
+    TickType_t xLastWakeTime = xTaskGetTickCount();    
     
     while(1){                 
         Serial.println(buffer);               
@@ -509,8 +511,13 @@ void Task_ReadSensor(void* pvParameters)
                 Sensor_Data.lat = gps.location.lat();
                 Sensor_Data.lng = gps.location.lng();    
             }                    
-            mpu.getEvent(&eventAccel, &eventGyro, &eventTemp);            
+                        
             mag.getEvent(&eventMag);            
+            
+            mpu.getEvent(&eventAccel, &eventGyro, &eventTemp);
+
+            
+            
             
             Sensor_Data.trip_number = tripNumber;
             Sensor_Data.routeID = routeID;
