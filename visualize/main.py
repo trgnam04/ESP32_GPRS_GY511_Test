@@ -42,20 +42,20 @@ def main():
     accel_data = [deque([0]*max_len, maxlen=max_len) for _ in range(3)]
     gyro_data = [deque([0]*max_len, maxlen=max_len) for _ in range(3)]
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 5))
     fig.suptitle('MPU6050 Real-time Data Visualization')
 
     # Accelerometer plot
     ax1.set_title('Accelerometer (X, Y, Z)')
-    ax1.set_ylim(-15, 15)
+    ax1.set_ylim(-7, 7)
     ax1.set_xlim(0, max_len)
     accel_lines = [ax1.plot(range(max_len), accel_data[i])[0] for i in range(3)]
 
     # Gyroscope plot
     ax2.set_title('Velocity (X, Y, Z)')
-    ax2.set_ylim(-15, 15)
+    ax2.set_ylim(-7, 7)
     ax2.set_xlim(0, max_len)
-    gyro_lines = [ax2.plot(range(max_len), gyro_data[i])[0] for i in range(2)]
+    gyro_lines = [ax2.plot(range(max_len), gyro_data[i])[0] for i in range(3)]
 
     ani = animation.FuncAnimation(fig, update_plot, fargs=(ser, accel_lines, gyro_lines, accel_data, gyro_data),
                                   interval=25, blit=True)
