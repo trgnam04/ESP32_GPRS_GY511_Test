@@ -1,5 +1,15 @@
 #define CORE_DEBUG_LEVEL 5
 
+// Size of state space
+#define EKF_N 8
+
+// Size of observation (measurement) space
+#define EKF_M 4
+
+// We need double precision to replicate the published results
+#define _float_t double
+
+
 #include <TinyGPSPlus.h>
 #include <Arduino.h>
 #include <Wire.h>
@@ -9,27 +19,16 @@
 #include <Arduino_MQTT_Client.h>
 #include <WiFi.h>
 #include <Server_Side_RPC.h>
-#include <rotary_encoder.h>
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_HMC5883_U.h>
+#include <rotary_encoder.h>
+#include <config.h>
+#include <tinyekf.h>
 
-
-#define SERIAL_BAUDRATE 9600
-#define TX_PIN 18
-#define RX_PIN 17
-#define SDA 21
-#define SCK 22
-#undef HTTP    
-#define MQTT   1
 
 SemaphoreHandle_t xI2CSemaphore;
 QueueHandle_t ServerDataQueue;
 
-
-// set up Wifi
-constexpr char WIFI_SSID[] = "271104E";
-constexpr char WIFI_PASSWORD[] = "1234567890";
-constexpr char TOKEN[] = "COLLECTOR";
 
 // set up Server
 constexpr char THINGSBOARD_SERVER[] = "app.coreiot.io";
@@ -40,18 +39,6 @@ constexpr uint16_t MAX_MESSAGE_RECEIVE_SIZE = 256U;
 
 constexpr uint8_t MAX_RPC_SUBSCRIPTIONS = 2U;
 constexpr uint8_t MAX_RPC_RESPONSE = 2U;
-// set up key
-constexpr char COLLECTOR_KEY_TRIP_NUMBER[] = "Trip-Number";
-constexpr char COLLECTOR_KEY_ROUTE_ID[] = "Route-ID";
-constexpr char COLLECTOR_KEY_LAT[] = "lat";
-constexpr char COLLECTOR_KEY_LNG[] = "lng";
-constexpr char COLLECTOR_KEY_ACCEL_X[] = "accX";
-constexpr char COLLECTOR_KEY_ACCEL_Y[] = "accY";
-constexpr char COLLECTOR_KEY_ACCEL_Z[] = "accZ";
-constexpr char COLLECTOR_KEY_MAG_X[] = "magX";
-constexpr char COLLECTOR_KEY_MAG_Y[] = "magY";
-constexpr char COLLECTOR_KEY_MAG_Z[] = "magZ";
-
 
 
 // Khai báo màn hình OLED SH1106 (I2C)
@@ -81,10 +68,27 @@ typedef struct{
     float Ax = 0;
     float Ay = 0;
     float Az = 0;
+    float Gx = 0;
+    float Gy = 0;
+    float Gz = 0;    
     double lat = 0;
-    double lng = 0;    
+    double lng = 0;
+
+    float Avr_Magx = 0;
+    float Avr_Magy = 0;
+    float Avr_Magz = 0;
+    float Avr_Ax = 0;
+    float Avr_Ay = 0;
+    float Avr_Az = 0;
+    float Avr_Gx = 0;
+    float Avr_Gy = 0;
+    float Avr_Gz = 0;
+    double Avr_lat = 0;
+    double Avr_lng = 0;
+        
     uint16_t trip_number = 0;
     uint16_t routeID = 0;
+    uint16_t stationID = 0;
 } sensor_data_t;
 
 sensor_data_t Sensor_Data;
@@ -94,8 +98,6 @@ char buffer[100];
 DynamicJsonDocument data(256);
 
 size_t data_size;
-uint32_t timestamp = 0;
-volatile bool isSending = false;
 
 // Supported for Display
 void displayNum(float num, int8_t x, int8_t y);
@@ -171,36 +173,24 @@ sensors_event_t eventAccel;
 void setup() {
     Serial.begin(SERIAL_BAUDRATE);           
     hardware.begin(9600, SERIAL_8N1, RX_PIN, TX_PIN);        
-    Wire.begin(SDA, SCK, 100000);        
-    Wire.setClock(100000);
+    Wire.begin(SDA, SCK);            
     ServerDataQueue = xQueueCreate(5, sizeof(sensor_data_t));
     xI2CSemaphore = xSemaphoreCreateMutex();    
+    mqttClient.set_buffer_size(256, 512);
     setupMagSensor();    
     
-    InitWiFi();
-    // while(1){
-    //     if (gps.satellites.isValid()) {
-    //         Serial.print("Satellites: ");
-    //         Serial.println(gps.satellites.value());
-    //         break;
-    //     } else {
-    //     Serial.println("Waiting for satellite lock...");
-    //     }
-    //     delay(500);
-    // }    
-    
-        
+    InitWiFi();            
    
 
     // Tăng stack lên 4096 tránh lỗi reset
-    xTaskCreatePinnedToCore(Task_ReadSensor, "Task_ReadSensor", 1024 * 4, NULL, 1, &TaskHandle_ReadSensor, 1);
+    xTaskCreatePinnedToCore(Task_ReadSensor, "Task_ReadSensor", 1024 * 5, NULL, 1, &TaskHandle_ReadSensor, 1);
     // Chờ cho đến khi quá trình measuring được gọi, mới bắt đầu được thực thi
     vTaskSuspend(TaskHandle_ReadSensor);    
 
-    xTaskCreatePinnedToCore(Task_CheckConnection, "Task_CheckConnection", 2048, NULL, 2, &TaskHandle_CheckConnection, 0);
+    xTaskCreatePinnedToCore(Task_CheckConnection, "Task_CheckConnection", 1024 * 2, NULL, 2, &TaskHandle_CheckConnection, 0);
     // vTaskSuspend(TaskHandle_CheckConnection);
 
-    xTaskCreatePinnedToCore(Task_SendData, "Task_SendData", 2048, NULL, 3, &TaskHandle_SendData, 0);    
+    xTaskCreatePinnedToCore(Task_SendData, "Task_SendData", 1024 * 3, NULL, 3, &TaskHandle_SendData, 0);    
     // vTaskSuspend(TaskHandle_SendData);
 
     xTaskCreatePinnedToCore(Task_ReadGPS, "Task_ReadGPS", 1024, NULL, 1, &TaskHandle_ReadGPS, 1);            
@@ -249,18 +239,24 @@ void convertData(void){
 #ifdef MQTT    
     data[COLLECTOR_KEY_TRIP_NUMBER] = Sensor_Data.trip_number;
     data[COLLECTOR_KEY_ROUTE_ID] = Sensor_Data.routeID;
-    data[COLLECTOR_KEY_LNG] = Sensor_Data.lng;
-    data[COLLECTOR_KEY_LAT] = Sensor_Data.lat;
-    data[COLLECTOR_KEY_MAG_X] = Sensor_Data.Magx;
-    data[COLLECTOR_KEY_MAG_Y] = Sensor_Data.Magy;
-    data[COLLECTOR_KEY_MAG_Z] = Sensor_Data.Magz;
-    data[COLLECTOR_KEY_ACCEL_X] = Sensor_Data.Ax;
-    data[COLLECTOR_KEY_ACCEL_Y] = Sensor_Data.Ay;
-    data[COLLECTOR_KEY_ACCEL_Z] = Sensor_Data.Az;
+    data[COLLECTOR_KEY_LNG] = Sensor_Data.Avr_lng;
+    data[COLLECTOR_KEY_LAT] = Sensor_Data.Avr_lat;
+    data[COLLECTOR_KEY_MAG_X] = Sensor_Data.Avr_Magx;
+    data[COLLECTOR_KEY_MAG_Y] = Sensor_Data.Avr_Magy;
+    data[COLLECTOR_KEY_MAG_Z] = Sensor_Data.Avr_Magz;
+    data[COLLECTOR_KEY_ACCEL_X] = Sensor_Data.Avr_Ax;
+    data[COLLECTOR_KEY_ACCEL_Y] = Sensor_Data.Avr_Ay;
+    data[COLLECTOR_KEY_ACCEL_Z] = Sensor_Data.Avr_Az;
+    data[COLLECTOR_KEY_GYRO_X] = Sensor_Data.Avr_Gx;
+    data[COLLECTOR_KEY_GYRO_Y] = Sensor_Data.Avr_Gy;
+    data[COLLECTOR_KEY_GYRO_Z] = Sensor_Data.Avr_Gz;
+    data[COLLECTOR_KEY_STATION_ID] = Sensor_Data.stationID;
     data_size = Helper::Measure_Json(data);    
 
-    snprintf(buffer, 100, "%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f", Sensor_Data.Magx, Sensor_Data.Magy, Sensor_Data.Magz, Sensor_Data.Ax,
-        Sensor_Data.Ay, Sensor_Data.Az, Sensor_Data.lat, Sensor_Data.lng);
+    snprintf(buffer, 128, "%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%d;%d:%d", 
+        Sensor_Data.Avr_Magx, Sensor_Data.Avr_Magy, Sensor_Data.Avr_Magz, Sensor_Data.Avr_Ax,
+        Sensor_Data.Avr_Ay, Sensor_Data.Avr_Az, Sensor_Data.Avr_Gx, Sensor_Data.Avr_Gy, Sensor_Data.Avr_Gz, 
+        Sensor_Data.Avr_lat, Sensor_Data.Avr_lng, Sensor_Data.trip_number, Sensor_Data.routeID, Sensor_Data.stationID);
 #endif
 
 
@@ -285,9 +281,10 @@ void setupMagSensor(void)
         /* There was a problem detecting the ADXL345 ... check your connections */        
         while(1);
     }    
-    mpu.setAccelerometerRange(MPU6050_RANGE_2_G);
+    mpu.setI2CBypass(true);
+    mpu.setAccelerometerRange(MPU6050_RANGE_4_G);
     mpu.setGyroRange(MPU6050_RANGE_250_DEG);
-    mpu.setFilterBandwidth(MPU6050_BAND_94_HZ);
+    mpu.setFilterBandwidth(MPU6050_BAND_260_HZ);    
 
 }
 
@@ -333,9 +330,9 @@ void displaySubPage(uint8_t idx){
             params[2] = "az";        
             params[3] = "tID";
             params[4] = "rID";
-            dtostrf(Sensor_Data.Ax, 6, 2, values[0]);
-            dtostrf(Sensor_Data.Ay, 6, 2, values[1]);
-            dtostrf(Sensor_Data.Az, 6, 2, values[2]);
+            dtostrf(Sensor_Data.Avr_Ax, 6, 2, values[0]);
+            dtostrf(Sensor_Data.Avr_Ay, 6, 2, values[1]);
+            dtostrf(Sensor_Data.Avr_Az, 6, 2, values[2]);
             sprintf(values[3], "%d", Sensor_Data.trip_number);
             sprintf(values[4], "%d", Sensor_Data.routeID);
             break;
@@ -346,11 +343,11 @@ void displaySubPage(uint8_t idx){
             params[2] = "mz";        
             params[3] = "lat";
             params[4] = "lng";
-            dtostrf(Sensor_Data.Magx, 6, 2, values[0]);
-            dtostrf(Sensor_Data.Magy, 6, 2, values[1]);
-            dtostrf(Sensor_Data.Magz, 6, 2, values[2]);
-            dtostrf(Sensor_Data.lat, 6, 2, values[3]);
-            dtostrf(Sensor_Data.lng, 6, 2, values[4]);
+            dtostrf(Sensor_Data.Avr_Magx, 6, 2, values[0]);
+            dtostrf(Sensor_Data.Avr_Magy, 6, 2, values[1]);
+            dtostrf(Sensor_Data.Avr_Magz, 6, 2, values[2]);
+            dtostrf(Sensor_Data.Avr_lat, 6, 2, values[3]);
+            dtostrf(Sensor_Data.Avr_lng, 6, 2, values[4]);
             break;
         }
     }        
@@ -503,38 +500,127 @@ void display_process_fsm(void){
 void Task_ReadSensor(void* pvParameters)
 {
     TickType_t xLastWakeTime = xTaskGetTickCount();    
-    
-    while(1){                 
-        Serial.println(buffer);               
-        if (xSemaphoreTake(xI2CSemaphore, portMAX_DELAY)){                    
-            if(gps.location.isUpdated()){
-                Sensor_Data.lat = gps.location.lat();
-                Sensor_Data.lng = gps.location.lng();    
-            }                    
-                        
-            mag.getEvent(&eventMag);            
-            
-            mpu.getEvent(&eventAccel, &eventGyro, &eventTemp);
+    uint16_t gpsSampleCount = 0;
+    uint16_t mpuSampleCount = 0;
+    uint16_t magSampleCount = 0;
+    sensor_data_t oldData;
+    static unsigned long taskMillis = 0;
+    static unsigned long getDataMillis = 0;  
+    const long taskInterval = 1000;
+    unsigned long currentMillis = 0;
+    const long getDataInterval = 5;
 
-            
-            
-            
+    uint8_t flag = 0;
+    
+    while(1){                                 
+        if (xSemaphoreTake(xI2CSemaphore, portMAX_DELAY)){                       
             Sensor_Data.trip_number = tripNumber;
             Sensor_Data.routeID = routeID;
             
-            Sensor_Data.Magx = eventMag.magnetic.x;
-            Sensor_Data.Magy = eventMag.magnetic.y;
-            Sensor_Data.Magz = eventMag.magnetic.z;                        
-            Sensor_Data.Ax = eventAccel.acceleration.x;
-            Sensor_Data.Ay = eventAccel.acceleration.y;
-            Sensor_Data.Az = eventAccel.acceleration.z;                                           
+            while(1){
+                // Mô phỏng tạm tín hiệu điểm ground truth
+                if(flag){
+                    Sensor_Data.stationID = 1;
+                }
+                else{
+                    Sensor_Data.stationID = 0;
+                }
 
-            convertData();        
-            xQueueSendToBack(ServerDataQueue, &Sensor_Data, portMAX_DELAY);
-            xSemaphoreGive(xI2CSemaphore);
-        }        
+                if(isPressed()){
+                    flag = (flag + 1) % 2;
+                }                
+
+                if(isLongPressed()){
+                    flag = 0;
+                }
+
+                
+
+                currentMillis = millis();
+                if(currentMillis - getDataMillis >= getDataInterval){
+                    getDataMillis = currentMillis;
+                    if(gps.location.isUpdated()){
+                        Sensor_Data.lat += gps.location.lat();
+                        Sensor_Data.lng += gps.location.lng();    
+                        gpsSampleCount++;
+                    }
+                                
+                    mag.getEvent(&eventMag);                        
+                    magSampleCount++;
+                    mpu.getEvent(&eventAccel, &eventGyro, &eventTemp);
+                    mpuSampleCount++;
+                                        
+                    
+                    Sensor_Data.Gx += eventGyro.gyro.x;
+                    Sensor_Data.Gy += eventGyro.gyro.y;
+                    Sensor_Data.Gz += eventGyro.gyro.z;
+                    
+                    Sensor_Data.Magx += eventMag.magnetic.x;
+                    Sensor_Data.Magy += eventMag.magnetic.y;
+                    Sensor_Data.Magz += eventMag.magnetic.z;    
         
-        vTaskDelayUntil(&xLastWakeTime, 1000);
+                    Sensor_Data.Ax += eventAccel.acceleration.x;
+                    Sensor_Data.Ay += eventAccel.acceleration.y;
+                    Sensor_Data.Az += eventAccel.acceleration.z;
+                }                    
+                
+                if (currentMillis - taskMillis >= taskInterval){
+                    taskMillis = currentMillis;
+                    Sensor_Data.Avr_Ax = Sensor_Data.Ax / mpuSampleCount;   
+                    Sensor_Data.Avr_Ay = Sensor_Data.Ay / mpuSampleCount;
+                    Sensor_Data.Avr_Az = Sensor_Data.Az / mpuSampleCount;
+
+                    Sensor_Data.Avr_Gx = Sensor_Data.Gx / mpuSampleCount;
+                    Sensor_Data.Avr_Gy = Sensor_Data.Gy / mpuSampleCount;
+                    Sensor_Data.Avr_Gz = Sensor_Data.Gz / mpuSampleCount;
+
+                    Sensor_Data.Avr_Magx = Sensor_Data.Magx / magSampleCount;
+                    Sensor_Data.Avr_Magy = Sensor_Data.Magy / magSampleCount;
+                    Sensor_Data.Avr_Magz = Sensor_Data.Magz / magSampleCount;
+
+                    Sensor_Data.Avr_lat = Sensor_Data.lat / (double)gpsSampleCount;
+                    Sensor_Data.Avr_lng = Sensor_Data.lng / (double)gpsSampleCount;
+
+                    Sensor_Data.Gx = 0;
+                    Sensor_Data.Gy = 0;
+                    Sensor_Data.Gz = 0;
+                    
+                    Sensor_Data.Magx = 0;
+                    Sensor_Data.Magy = 0;
+                    Sensor_Data.Magz = 0;    
+        
+                    Sensor_Data.Ax = 0;
+                    Sensor_Data.Ay = 0;
+                    Sensor_Data.Az = 0;
+
+                    Sensor_Data.lat = 0;
+                    Sensor_Data.lng = 0;
+
+                    mpuSampleCount = 0;
+                    magSampleCount = 0;
+                    gpsSampleCount = 0;
+                    
+                    convertData();
+                    Serial.println(buffer);  
+                    xQueueSendToBack(ServerDataQueue, &Sensor_Data, portMAX_DELAY);
+                    xSemaphoreGive(xI2CSemaphore);   
+                    break;
+                }
+                
+
+                // Kalman Filter here
+                
+            }
+        }     
+        // if (xSemaphoreTake(xI2CSemaphore, portMAX_DELAY)){                    
+            
+
+            
+        //     // xQueueSendToBack(ServerDataQueue, &Sensor_Data, portMAX_DELAY);
+            
+        // }        
+        
+        vTaskDelayUntil(&xLastWakeTime, 10);
         /* Delay before the next sample */        
     }
 }
