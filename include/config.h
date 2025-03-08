@@ -7,8 +7,8 @@
 #define MQTT   1
 
 // set up Wifi
-constexpr char WIFI_SSID[] = "v";
-constexpr char WIFI_PASSWORD[] = "12345678";
+constexpr char WIFI_SSID[] = "271104E";
+constexpr char WIFI_PASSWORD[] = "1234567890";
 constexpr char TOKEN[] = "COLLECTOR";
 
 

@@ -183,18 +183,16 @@ void setup() {
    
 
     // Tăng stack lên 4096 tránh lỗi reset
-    xTaskCreatePinnedToCore(Task_ReadSensor, "Task_ReadSensor", 1024 * 5, NULL, 1, &TaskHandle_ReadSensor, 1);
+    xTaskCreatePinnedToCore(Task_ReadSensor, "Task_ReadSensor", 1024 * 5, NULL, 1, &TaskHandle_ReadSensor, 0);
     // Chờ cho đến khi quá trình measuring được gọi, mới bắt đầu được thực thi
     vTaskSuspend(TaskHandle_ReadSensor);    
+    xTaskCreatePinnedToCore(Task_ReadGPS, "Task_ReadGPS", 1024, NULL, 2, &TaskHandle_ReadGPS, 0);         
 
-    xTaskCreatePinnedToCore(Task_CheckConnection, "Task_CheckConnection", 1024 * 2, NULL, 2, &TaskHandle_CheckConnection, 0);
+    xTaskCreatePinnedToCore(Task_CheckConnection, "Task_CheckConnection", 1024 * 2, NULL, 2, &TaskHandle_CheckConnection, 1);
     // vTaskSuspend(TaskHandle_CheckConnection);
 
-    xTaskCreatePinnedToCore(Task_SendData, "Task_SendData", 1024 * 3, NULL, 3, &TaskHandle_SendData, 0);    
-    // vTaskSuspend(TaskHandle_SendData);
-
-    xTaskCreatePinnedToCore(Task_ReadGPS, "Task_ReadGPS", 1024, NULL, 1, &TaskHandle_ReadGPS, 1);            
-    
+    xTaskCreatePinnedToCore(Task_SendData, "Task_SendData", 1024 * 3, NULL, 3, &TaskHandle_SendData, 1);    
+    // vTaskSuspend(TaskHandle_SendData);           
     xTaskCreatePinnedToCore(Task_MenuProcess, "Task_MenuProcess", 1024 * 2, NULL, 1, &TaskHandle_MenuProcess, 1);    
     xTaskCreatePinnedToCore(Task_ReadRotaryEncoder, "Task_ReadRotary", 1024, NULL, 2, &TaskHandle_ReadRotary, 1);
         
@@ -239,24 +237,24 @@ void convertData(void){
 #ifdef MQTT    
     data[COLLECTOR_KEY_TRIP_NUMBER] = Sensor_Data.trip_number;
     data[COLLECTOR_KEY_ROUTE_ID] = Sensor_Data.routeID;
-    data[COLLECTOR_KEY_LNG] = Sensor_Data.Avr_lng;
-    data[COLLECTOR_KEY_LAT] = Sensor_Data.Avr_lat;
-    data[COLLECTOR_KEY_MAG_X] = Sensor_Data.Avr_Magx;
-    data[COLLECTOR_KEY_MAG_Y] = Sensor_Data.Avr_Magy;
-    data[COLLECTOR_KEY_MAG_Z] = Sensor_Data.Avr_Magz;
-    data[COLLECTOR_KEY_ACCEL_X] = Sensor_Data.Avr_Ax;
-    data[COLLECTOR_KEY_ACCEL_Y] = Sensor_Data.Avr_Ay;
-    data[COLLECTOR_KEY_ACCEL_Z] = Sensor_Data.Avr_Az;
-    data[COLLECTOR_KEY_GYRO_X] = Sensor_Data.Avr_Gx;
-    data[COLLECTOR_KEY_GYRO_Y] = Sensor_Data.Avr_Gy;
-    data[COLLECTOR_KEY_GYRO_Z] = Sensor_Data.Avr_Gz;
+    data[COLLECTOR_KEY_LNG] = Sensor_Data.lng;
+    data[COLLECTOR_KEY_LAT] = Sensor_Data.lat;
+    data[COLLECTOR_KEY_MAG_X] = Sensor_Data.Magx;
+    data[COLLECTOR_KEY_MAG_Y] = Sensor_Data.Magy;
+    data[COLLECTOR_KEY_MAG_Z] = Sensor_Data.Magz;
+    data[COLLECTOR_KEY_ACCEL_X] = Sensor_Data.Ax;
+    data[COLLECTOR_KEY_ACCEL_Y] = Sensor_Data.Ay;
+    data[COLLECTOR_KEY_ACCEL_Z] = Sensor_Data.Az;
+    data[COLLECTOR_KEY_GYRO_X] = Sensor_Data.Gx;
+    data[COLLECTOR_KEY_GYRO_Y] = Sensor_Data.Gy;
+    data[COLLECTOR_KEY_GYRO_Z] = Sensor_Data.Gz;
     data[COLLECTOR_KEY_STATION_ID] = Sensor_Data.stationID;
     data_size = Helper::Measure_Json(data);    
 
     snprintf(buffer, 128, "%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%d;%d:%d", 
-        Sensor_Data.Avr_Magx, Sensor_Data.Avr_Magy, Sensor_Data.Avr_Magz, Sensor_Data.Avr_Ax,
-        Sensor_Data.Avr_Ay, Sensor_Data.Avr_Az, Sensor_Data.Avr_Gx, Sensor_Data.Avr_Gy, Sensor_Data.Avr_Gz, 
-        Sensor_Data.Avr_lat, Sensor_Data.Avr_lng, Sensor_Data.trip_number, Sensor_Data.routeID, Sensor_Data.stationID);
+        Sensor_Data.Magx, Sensor_Data.Magy, Sensor_Data.Magz, Sensor_Data.Ax,
+        Sensor_Data.Ay, Sensor_Data.Az, Sensor_Data.Gx, Sensor_Data.Gy, Sensor_Data.Gz, 
+        Sensor_Data.lat, Sensor_Data.lng, Sensor_Data.trip_number, Sensor_Data.routeID, Sensor_Data.stationID);
 #endif
 
 
@@ -566,35 +564,20 @@ void Task_ReadSensor(void* pvParameters)
                 
                 if (currentMillis - taskMillis >= taskInterval){
                     taskMillis = currentMillis;
-                    Sensor_Data.Avr_Ax = Sensor_Data.Ax / mpuSampleCount;   
-                    Sensor_Data.Avr_Ay = Sensor_Data.Ay / mpuSampleCount;
-                    Sensor_Data.Avr_Az = Sensor_Data.Az / mpuSampleCount;
+                    Sensor_Data.Ax = Sensor_Data.Ax / mpuSampleCount;   
+                    Sensor_Data.Ay = Sensor_Data.Ay / mpuSampleCount;
+                    Sensor_Data.Az = Sensor_Data.Az / mpuSampleCount;
 
-                    Sensor_Data.Avr_Gx = Sensor_Data.Gx / mpuSampleCount;
-                    Sensor_Data.Avr_Gy = Sensor_Data.Gy / mpuSampleCount;
-                    Sensor_Data.Avr_Gz = Sensor_Data.Gz / mpuSampleCount;
+                    Sensor_Data.Gx = Sensor_Data.Gx / mpuSampleCount;
+                    Sensor_Data.Gy = Sensor_Data.Gy / mpuSampleCount;
+                    Sensor_Data.Gz = Sensor_Data.Gz / mpuSampleCount;
 
-                    Sensor_Data.Avr_Magx = Sensor_Data.Magx / magSampleCount;
-                    Sensor_Data.Avr_Magy = Sensor_Data.Magy / magSampleCount;
-                    Sensor_Data.Avr_Magz = Sensor_Data.Magz / magSampleCount;
+                    Sensor_Data.Magx = Sensor_Data.Magx / magSampleCount;
+                    Sensor_Data.Magy = Sensor_Data.Magy / magSampleCount;
+                    Sensor_Data.Magz = Sensor_Data.Magz / magSampleCount;
 
-                    Sensor_Data.Avr_lat = Sensor_Data.lat / (double)gpsSampleCount;
-                    Sensor_Data.Avr_lng = Sensor_Data.lng / (double)gpsSampleCount;
-
-                    Sensor_Data.Gx = 0;
-                    Sensor_Data.Gy = 0;
-                    Sensor_Data.Gz = 0;
-                    
-                    Sensor_Data.Magx = 0;
-                    Sensor_Data.Magy = 0;
-                    Sensor_Data.Magz = 0;    
-        
-                    Sensor_Data.Ax = 0;
-                    Sensor_Data.Ay = 0;
-                    Sensor_Data.Az = 0;
-
-                    Sensor_Data.lat = 0;
-                    Sensor_Data.lng = 0;
+                    Sensor_Data.lat = Sensor_Data.lat / (double)gpsSampleCount;
+                    Sensor_Data.lng = Sensor_Data.lng / (double)gpsSampleCount;                    
 
                     mpuSampleCount = 0;
                     magSampleCount = 0;
@@ -604,6 +587,21 @@ void Task_ReadSensor(void* pvParameters)
                     Serial.println(buffer);  
                     xQueueSendToBack(ServerDataQueue, &Sensor_Data, portMAX_DELAY);
                     xSemaphoreGive(xI2CSemaphore);   
+
+                    Sensor_Data.Ax = 0;   
+                    Sensor_Data.Ay = 0;
+                    Sensor_Data.Az = 0;
+
+                    Sensor_Data.Gx = 0;
+                    Sensor_Data.Gy = 0;
+                    Sensor_Data.Gz = 0;
+
+                    Sensor_Data.Magx = 0;
+                    Sensor_Data.Magy = 0;
+                    Sensor_Data.Magz = 0;
+
+                    Sensor_Data.lat = 0.0;  // Nếu lat là kiểu double
+                    Sensor_Data.lng = 0.0;  // Nếu lng là kiểu double
                     break;
                 }
                 
