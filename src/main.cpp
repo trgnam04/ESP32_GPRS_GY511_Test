@@ -89,7 +89,7 @@ float ax, ay, az, gx, gy, gz;
 #define KMH_TO_MS 5.0f/18.0f
 
 static unsigned long taskMillis = 0;
-static unsigned long getDataMillis = 0;  unsigned int count = 0;
+static unsigned long getDataMillis = 0;  unsigned int count_for_mean = 0;
 const long taskInterval = 100;
 unsigned long currentMillis = 0;
 
@@ -106,13 +106,6 @@ float alpha_complementary = 0.98;
 float ax_filtered = 0.0;
 float ay_filtered = 0.0;
 float az_filtered = 0.0;
-
-float vx = 0.0;
-float vy = 0.0;
-float vz = 0.0;
-
-float l_o = 0.0f;
-float l_f = 0.0f;
 
 float velocity_stop = 10.0f;
 
@@ -145,19 +138,19 @@ void loop() {
     gx += gx_temp;
     gy += gy_temp;
     gz += gz_temp;
-    count += 1;
+    count_for_mean += 1;
   }
 
   if (currentMillis - taskMillis >= taskInterval) {
     taskMillis = currentMillis;
     // average from 100 measurement
-    ax = ax / (float)count;
-    ay = ay / (float)count;
-    az = az / (float)count;
-    gx = gx / (float)count;
-    gy = gy / (float)count;
-    gz = gz / (float)count;
-    count = 0;
+    ax = ax / (float)count_for_mean;
+    ay = ay / (float)count_for_mean;
+    az = az / (float)count_for_mean;
+    gx = gx / (float)count_for_mean;
+    gy = gy / (float)count_for_mean;
+    gz = gz / (float)count_for_mean;
+    count_for_mean = 0;
 
     // 3) Estimate orientation
   // (a) Get pitch/roll from accel (in radians)
@@ -184,14 +177,14 @@ void loop() {
   float az_linear = az - gz_comp;
 
   // 5) Filter the linear acceleration
-  float beta = 0.9f; // tune
-  ax_filtered = beta * ax_filtered + (1.0f - beta) * ax_linear;
-  ay_filtered = beta * ay_filtered + (1.0f - beta) * ay_linear;
-  az_filtered = beta * az_filtered + (1.0f - beta) * az_linear;
+  // float beta = 0.9f; // tune
+  // ax_filtered = beta * ax_filtered + (1.0f - beta) * ax_linear;
+  // ay_filtered = beta * ay_filtered + (1.0f - beta) * ay_linear;
+  // az_filtered = beta * az_filtered + (1.0f - beta) * az_linear;
 
   // 6) Integrate to get velocity
-  vx += ax_filtered * dt;
-  vy += ay_filtered * dt;
+  // vx += ax_filtered * dt;
+  // vy += ay_filtered * dt;
   // vz += az_filtered * dt;
 
   // zero velocity or zero acceleration
