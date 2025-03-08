@@ -1,10 +1,13 @@
 /*
- * ESP32 Kalman Filter for Position Fusion
+ * ESP32 Kalman Filter for Position Fusion – Đọc dữ liệu JSON từ Serial
  * Phiên bản tối ưu cho môi trường vi điều khiển với bộ nhớ hạn chế.
+ *
+ * Yêu cầu: ArduinoJson library (version 6) được cài đặt trong Arduino IDE.
  */
 
  #include <Arduino.h>
  #include <math.h>
+ #include <ArduinoJson.h>
  
  // -------------------------
  // Các hằng số & Kiểu dữ liệu
@@ -109,8 +112,6 @@
  // -------------------------
  // Định nghĩa các cấu trúc ma trận tĩnh
  // -------------------------
- 
- // Vector 2 phần tử
  struct Vector2 {
    double x;
    double y;
@@ -131,7 +132,6 @@
    }
  };
  
- // Ma trận 2x2 tĩnh
  struct Matrix2x2 {
    double m00, m01;
    double m10, m11;
@@ -177,7 +177,6 @@
    Matrix2x2 inverse() const {
      double det = determinant();
      if (fabs(det) < 1e-9) {
-       // Trên vi điều khiển, bạn có thể xử lý lỗi theo cách đơn giản
        return Matrix2x2();  // Trả về ma trận 0 nếu không khả nghịch
      }
      double invDet = 1.0 / det;
@@ -208,6 +207,9 @@
    Vector2 currentState; // Trạng thái hiện tại [position; velocity]
    double currentStateTimestampSeconds;
    
+   // Lưu lại giá trị độ lệch chuẩn accelerometer ban đầu (sigma_a)
+   double sigma_a;
+   
    KalmanFilterFusedPositionAccelerometer(double initialPosition, double initialVelocity,
                                             double positionStdDev, double accelerometerStdDev,
                                             double currentTimestampSeconds)
@@ -215,13 +217,14 @@
      currentState = Vector2(initialPosition, initialVelocity);
      currentStateTimestampSeconds = currentTimestampSeconds;
      I = IdentityMatrix();
-     P = IdentityMatrix();  // Ở đây khởi tạo đơn giản bằng ma trận đơn vị (có thể tinh chỉnh)
-     Q = Matrix2x2(accelerometerStdDev * accelerometerStdDev, 0,
-                   0, accelerometerStdDev * accelerometerStdDev);
+     P = IdentityMatrix();  // Có thể tinh chỉnh theo ứng dụng cụ thể
+     sigma_a = accelerometerStdDev; // Lưu lại sigma_a ban đầu
+     Q = Matrix2x2(sigma_a * sigma_a, 0,
+                   0, sigma_a * sigma_a); // Khởi tạo ban đầu (sẽ được tính lại theo dt trong Predict)
      R = Matrix2x2(positionStdDev * positionStdDev, 0,
                    0, positionStdDev * positionStdDev);
-     A = Matrix2x2(); // Sẽ được tính lại trong recreateStateTransitionMatrix
-     B = Vector2();   // Sẽ được tính lại trong recreateControlMatrix
+     A = Matrix2x2(); // Sẽ được cập nhật trong recreateStateTransitionMatrix
+     B = Vector2();   // Sẽ được cập nhật trong recreateControlMatrix
      u = 0.0;
      z = Vector2();
    }
@@ -237,38 +240,57 @@
      A = Matrix2x2(1.0, deltaSeconds, 0.0, 1.0);
    }
    
-   // Prediction step
+   // Prediction step: tính Q theo Δt và cập nhật trạng thái, hiệp phương sai
    void Predict(double accelerationThisAxis, double timestampNow) {
      double deltaT = timestampNow - currentStateTimestampSeconds;
      recreateControlMatrix(deltaT);
      recreateStateTransitionMatrix(deltaT);
      u = accelerationThisAxis;
-     // x̂ₖ₊₁|ₖ = A * xₖ|ₖ + B * u
+     
+     // Tính lại Q theo Δt dựa trên sigma_a:
+     double dt2 = deltaT * deltaT;
+     double dt3 = dt2 * deltaT;
+     double dt4 = dt3 * deltaT;
+     Q = Matrix2x2(0.25 * dt4 * sigma_a * sigma_a, 0.5 * dt3 * sigma_a * sigma_a,
+                   0.5 * dt3 * sigma_a * sigma_a, dt2 * sigma_a * sigma_a);
+     
+     // Dự đoán trạng thái: x̂ₖ₊₁|ₖ = A*xₖ|ₖ + B*u
      currentState = A * currentState + B * u;
-     // Pₖ₊₁|ₖ = A * Pₖ|ₖ * Aᵀ + Q
+     // Dự đoán hiệp phương sai: Pₖ₊₁|ₖ = A*Pₖ|ₖ*Aᵀ + Q
      P = A * P * A.transpose() + Q;
      currentStateTimestampSeconds = timestampNow;
    }
    
-   // Update step
-   void Update(double position, double velocityThisAxis, double* positionError, double velocityError) {
+   // Update step: sử dụng dạng Joseph Form để cập nhật P
+   void Update(double measuredPosition, double measuredVelocity, double* positionError, double velocityError) {
      // Thiết lập vector đo lường: z = [position; velocity]
-     z = Vector2(position, velocityThisAxis);
+     z = Vector2(measuredPosition, measuredVelocity);
+     // Cập nhật ma trận nhiễu đo R (nếu có lỗi đo vị trí được cung cấp)
      if (positionError != nullptr) {
        R.m00 = (*positionError) * (*positionError);
      }
      R.m11 = velocityError * velocityError;
-     // Đổi mới: y = z - x̂ₖ₊₁|ₖ
+     
+     // Giả sử mô hình đo lường là tuyến tính: H = I
+     Matrix2x2 H = IdentityMatrix();
+     
+     // Tính đổi mới: y = z - H*currentState = z - currentState
      Vector2 y = z - currentState;
-     // Hiệp phương sai đổi mới: S = P + R (với H = I)
+     
+     // Tính hiệp phương sai đổi mới: S = H*P*Hᵀ + R = P + R
      Matrix2x2 S = P + R;
      Matrix2x2 SInv = S.inverse();
-     // Kalman Gain: K = P * S⁻¹
+     
+     // Kalman Gain: K = P*Hᵀ*S⁻¹ = P*S⁻¹
      Matrix2x2 K = P * SInv;
-     // Cập nhật trạng thái: x̂ₖ₊₁|ₖ₊₁ = x̂ₖ₊₁|ₖ + K * y
+     
+     // Cập nhật trạng thái theo dạng chuẩn: x̂ₖ₊₁ = x̂ₖ₊₁ + K*y
      currentState = currentState + K * y;
-     // Cập nhật hiệp phương sai: Pₖ₊₁|ₖ₊₁ = (I - K) * P
-     P = (I - K) * P;
+     
+     // Cập nhật ma trận hiệp phương sai bằng dạng Joseph form:\n    // P = (I - K*H)*P*(I - K*H)ᵀ + K*R*Kᵀ, với H = I
+     Matrix2x2 I = IdentityMatrix();
+     Matrix2x2 IK = I - K;
+     P = IK * P * IK.transpose() + K * R * K.transpose();
    }
    
    double GetPredictedPosition() {
@@ -279,15 +301,18 @@
      return currentState.y;
    }
  };
- 
+  
  // -------------------------
- // Giả lập dữ liệu cảm biến (đối với ESP32, thay thế bằng đọc từ cảm biến thật)
+ // Cấu trúc dữ liệu cảm biến được gửi qua serial (JSON)
  // -------------------------
  struct sensorData {
    double Timestamp;
    double GpsLat;
    double GpsLon;
    double GpsAlt;
+   float Pitch;
+   float Yaw;
+   float Roll;
    float AbsNorthAcc;
    float AbsEastAcc;
    float AbsUpAcc;
@@ -297,120 +322,137 @@
    double VelError;
    double AltitudeError;
  };
- 
+  
  // -------------------------
- // Biến toàn cục (cho ví dụ đơn giản)
+ // Các biến toàn cục cho Kalman Filter
  // -------------------------
- const int numSamples = 10; // Giả sử có 10 mẫu dữ liệu
- sensorData sensorSamples[numSamples];  // Bạn có thể cập nhật giá trị thực từ cảm biến
- 
- // -------------------------
- // Hàm setup() – chạy một lần khi khởi động ESP32
- // -------------------------
- void setup() {
-   Serial.begin(9600);
-   // Giả lập dữ liệu mẫu (trong thực tế, bạn sẽ lấy từ cảm biến)
-   for (int i = 0; i < numSamples; i++) {
-     sensorSamples[i].Timestamp = i * 0.1;  // 0.1 giây giữa các mẫu
-     sensorSamples[i].GpsLat = 10.0 + 0.001 * i;
-     sensorSamples[i].GpsLon = 106.0 + 0.001 * i;
-     sensorSamples[i].GpsAlt = 50.0;
-     sensorSamples[i].AbsNorthAcc = 0.01;
-     sensorSamples[i].AbsEastAcc = 0.02;
-     sensorSamples[i].AbsUpAcc = 0.005;
-     sensorSamples[i].VelNorth = 0.0;
-     sensorSamples[i].VelEast = 0.0;
-     sensorSamples[i].VelDown = 0.0;
-     sensorSamples[i].VelError = 0.5;
-     sensorSamples[i].AltitudeError = 1.0;
+ KalmanFilterFusedPositionAccelerometer* kfEast = nullptr;
+ KalmanFilterFusedPositionAccelerometer* kfNorth = nullptr;
+ KalmanFilterFusedPositionAccelerometer* kfAlt = nullptr;
+ bool filterInitialized = false;
+  
+ // Hàm cập nhật giá trị của Kalman Filter dựa trên dữ liệu JSON đã parse
+ void updateKalmanFilter(const sensorData &data) {
+   // Nếu chưa khởi tạo, khởi tạo Kalman Filter dựa trên dữ liệu đầu tiên
+   if (!filterInitialized) {
+     double latLonStdDev = 2.0;
+     double altStdDev = (double)3.518522;
+     double accelEastStdDev = ACTUAL_GRAVITY * 0.033436;
+     double accelNorthStdDev = ACTUAL_GRAVITY * 0.053553;
+     double accelUpStdDev = ACTUAL_GRAVITY * 0.208868;
+      
+     double initialLonMeters = LongitudeToMeters(data.GpsLon);
+     double initialLatMeters = LatitudeToMeters(data.GpsLat);
+      
+     kfEast = new KalmanFilterFusedPositionAccelerometer(initialLonMeters, data.VelEast,
+                                                          latLonStdDev, accelEastStdDev,
+                                                          data.Timestamp);
+     kfNorth = new KalmanFilterFusedPositionAccelerometer(initialLatMeters, data.VelNorth,
+                                                           latLonStdDev, accelNorthStdDev,
+                                                           data.Timestamp);
+     kfAlt = new KalmanFilterFusedPositionAccelerometer(data.GpsAlt, -data.VelDown,
+                                                         altStdDev, accelUpStdDev,
+                                                         data.Timestamp);
+     filterInitialized = true;
    }
-   Serial.println("Setup complete.");
- }
- 
- // -------------------------
- // Hàm loop() – chạy liên tục
- // -------------------------
- void loop() {
-   static bool initialized = false;
-   static KalmanFilterFusedPositionAccelerometer* kfEast = nullptr;
-   static KalmanFilterFusedPositionAccelerometer* kfNorth = nullptr;
-   static KalmanFilterFusedPositionAccelerometer* kfAlt = nullptr;
-   
-   // Khởi tạo bộ lọc Kalman dựa trên mẫu đầu tiên (nếu chưa khởi tạo)
-   if (!initialized) {
-     sensorData initData = sensorSamples[0];
-     double latLonStdDev = 2.0; // +/- 1m, tăng thêm cho an toàn
-     double altStdDev = 3.5;
-     double accelEastStdDev = ACTUAL_GRAVITY * 0.0334;
-     double accelNorthStdDev = ACTUAL_GRAVITY * 0.0536;
-     double accelUpStdDev = ACTUAL_GRAVITY * 0.2089;
-     
-     double initialLonMeters = LongitudeToMeters(initData.GpsLon);
-     double initialLatMeters = LatitudeToMeters(initData.GpsLat);
-     
-     kfEast = new KalmanFilterFusedPositionAccelerometer(initialLonMeters, initData.VelEast,
-                                                         latLonStdDev, accelEastStdDev,
-                                                         initData.Timestamp);
-     kfNorth = new KalmanFilterFusedPositionAccelerometer(initialLatMeters, initData.VelNorth,
-                                                          latLonStdDev, accelNorthStdDev,
-                                                          initData.Timestamp);
-     kfAlt = new KalmanFilterFusedPositionAccelerometer(initData.GpsAlt, -initData.VelDown,
-                                                        altStdDev, accelUpStdDev,
-                                                        initData.Timestamp);
-     initialized = true;
-   }
-   
-   // Giả sử mỗi 100ms cập nhật một mẫu dữ liệu (vòng lặp đơn giản)
-   static int sampleIndex = 1;
-   if (sampleIndex >= numSamples) {
-     sampleIndex = 1; // reset
-   }
-   
-   sensorData data = sensorSamples[sampleIndex];
-   
-   // Prediction step (chia tỷ lệ gia tốc theo trọng lực)
+    
+   // Prediction step: sử dụng dữ liệu gia tốc (đã nhân với trọng lực)
    kfEast->Predict(data.AbsEastAcc * ACTUAL_GRAVITY, data.Timestamp);
    kfNorth->Predict(data.AbsNorthAcc * ACTUAL_GRAVITY, data.Timestamp);
    kfAlt->Predict(data.AbsUpAcc * ACTUAL_GRAVITY, data.Timestamp);
-   
-   // Update step nếu có dữ liệu GPS hợp lệ (giả sử GpsLat != 0)
+    
+   // Nếu dữ liệu GPS hợp lệ, thực hiện Update step
    if (data.GpsLat != 0.0) {
      double lonMeters = LongitudeToMeters(data.GpsLon);
      kfEast->Update(lonMeters, data.VelEast, nullptr, data.VelError);
-     
+      
      double latMeters = LatitudeToMeters(data.GpsLat);
      kfNorth->Update(latMeters, data.VelNorth, nullptr, data.VelError);
-     
+      
      double vUp = -data.VelDown;
-     kfAlt->Update(data.GpsAlt, vUp, &data.AltitudeError, data.VelError);
+     kfAlt->Update(data.GpsAlt, vUp, (double*)&data.AltitudeError, data.VelError);
    }
-   else{
-    // do something in order to not affect the covariance.
-   }
-   
-   
-   // Lấy kết quả dự đoán và chuyển đổi về tọa độ địa lý
+    
+   // Sau khi cập nhật, in ra kết quả dự đoán
    double predictedLonMeters = kfEast->GetPredictedPosition();
    double predictedLatMeters = kfNorth->GetPredictedPosition();
    double predictedAlt = kfAlt->GetPredictedPosition();
    GeoPoint point = MetersToGeopoint(predictedLatMeters, predictedLonMeters);
-   
+    
    double predictedVE = kfEast->GetPredictedVelocity();
    double predictedVN = kfNorth->GetPredictedVelocity();
    double resultantV = sqrt(predictedVE * predictedVE + predictedVN * predictedVN);
-   
-   Serial.print(data.Timestamp - sensorSamples[0].Timestamp, 3);
+    
+   Serial.print("Time: ");
+   Serial.print(data.Timestamp, 3);
    Serial.print(" sec, Lat: ");
-   Serial.print(point.Latitude, 6);
+   Serial.print(point.Latitude, 7);
    Serial.print(", Lon: ");
-   Serial.print(point.Longitude, 6);
+   Serial.print(point.Longitude, 7);
    Serial.print(", Alt: ");
    Serial.print(predictedAlt, 2);
    Serial.print(", V(mph): ");
-   Serial.print(2.23694 * resultantV, 2);
-   Serial.println();
-   
-   sampleIndex++;
-   delay(100);  // 100ms delay
+   Serial.println(2.23694 * resultantV, 2);
+ }
+  
+ // -------------------------
+ // Hàm đọc JSON từ Serial
+ // -------------------------
+ bool readJsonFromSerial(sensorData &data) {
+   // Giả sử mỗi JSON được gửi trên một dòng kết thúc bằng '\\n'
+   if (Serial.available()) {
+     String jsonString = Serial.readStringUntil('\n');
+     if (jsonString.length() > 0) {
+       // Tạo một StaticJsonDocument với dung lượng phù hợp (có thể tinh chỉnh)
+       DynamicJsonDocument doc(1024);
+       DeserializationError error = deserializeJson(doc, jsonString);
+       if (error) {
+         Serial.print("JSON parse error: ");
+         Serial.println(error.f_str());
+         return false;
+       }
+       // Lấy các trường từ JSON
+       data.Timestamp = doc["timestamp"] | 0.0;
+       data.GpsLat = doc["gps_lat"] | 0.0;
+       data.GpsLon = doc["gps_lon"] | 0.0;
+       data.GpsAlt = doc["gps_alt"] | 0.0;
+       data.Pitch = doc["pitch"] | 0.0;
+       data.Yaw = doc["yaw"] | 0.0;
+       data.Roll = doc["roll"] | 0.0;
+       data.AbsNorthAcc = doc["abs_north_acc"] | 0.0;
+       data.AbsEastAcc = doc["abs_east_acc"] | 0.0;
+       data.AbsUpAcc = doc["abs_up_acc"] | 0.0;
+       data.VelNorth = doc["vel_north"] | 0.0;
+       data.VelEast = doc["vel_east"] | 0.0;
+       data.VelDown = doc["vel_down"] | 0.0;
+       data.VelError = doc["vel_error"] | 0.0;
+       data.AltitudeError = doc["altitude_error"] | 0.0;
+       return true;
+     }
+   }
+   return false;
+ }
+  
+ // -------------------------
+ // Hàm setup() – khởi tạo ESP32
+ // -------------------------
+ void setup() {
+   Serial.begin(115200);
+   Serial.println("ESP32 Kalman Filter Test Started");
+   // Chờ Serial sẵn sàng (nếu cần)
+   delay(1000);
+ }
+  
+ // -------------------------
+ // Hàm loop() – vòng lặp chính
+ // -------------------------
+ void loop() {
+   sensorData currentData;
+   // Đọc dữ liệu JSON từ Serial (nếu có)
+   if (readJsonFromSerial(currentData)) {
+     updateKalmanFilter(currentData);
+   }
+   // Có thể thêm delay ngắn nếu cần
+   delay(10);
  }
  
