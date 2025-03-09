@@ -42,7 +42,7 @@ constexpr uint8_t MAX_RPC_RESPONSE = 2U;
 
 
 // Khai báo màn hình OLED SH1106 (I2C)
-U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
+U8G2_SH1106_128X64_NONAME_F_2ND_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE, 26, 25);
 Adafruit_HMC5883_Unified mag = Adafruit_HMC5883_Unified(12345);
 Adafruit_MPU6050 mpu;
 // GPRS
@@ -174,6 +174,7 @@ void setup() {
     Serial.begin(SERIAL_BAUDRATE);           
     hardware.begin(9600, SERIAL_8N1, RX_PIN, TX_PIN);        
     Wire.begin(SDA, SCK);            
+    Wire1.begin(25, 26);            
     ServerDataQueue = xQueueCreate(5, sizeof(sensor_data_t));
     xI2CSemaphore = xSemaphoreCreateMutex();    
     mqttClient.set_buffer_size(256, 512);
