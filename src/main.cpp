@@ -180,22 +180,24 @@ void setup() {
     mqttClient.set_buffer_size(256, 512);
     setupMagSensor();    
     
-    InitWiFi();            
+    // InitWiFi();            
    
 
     // Tăng stack lên 4096 tránh lỗi reset
-    xTaskCreatePinnedToCore(Task_ReadSensor, "Task_ReadSensor", 1024 * 5, NULL, 1, &TaskHandle_ReadSensor, 0);
+    xTaskCreatePinnedToCore(Task_ReadSensor, "Task_ReadSensor", 1024 * 5, NULL, 3, &TaskHandle_ReadSensor, 1);
     // Chờ cho đến khi quá trình measuring được gọi, mới bắt đầu được thực thi
-    vTaskSuspend(TaskHandle_ReadSensor);    
-    xTaskCreatePinnedToCore(Task_ReadGPS, "Task_ReadGPS", 1024, NULL, 2, &TaskHandle_ReadGPS, 0);         
+    // vTaskSuspend(TaskHandle_ReadSensor);    
+    // xTaskCreatePinnedToCore(Task_ReadGPS, "Task_ReadGPS", 1024, NULL, 2, &TaskHandle_ReadGPS, 0);         
 
-    xTaskCreatePinnedToCore(Task_CheckConnection, "Task_CheckConnection", 1024 * 2, NULL, 2, &TaskHandle_CheckConnection, 1);
+    // xTaskCreatePinnedToCore(Task_CheckConnection, "Task_CheckConnection", 1024 * 2, NULL, 2, &TaskHandle_CheckConnection, 1);
     // vTaskSuspend(TaskHandle_CheckConnection);
 
-    xTaskCreatePinnedToCore(Task_SendData, "Task_SendData", 1024 * 3, NULL, 3, &TaskHandle_SendData, 1);    
+    // xTaskCreatePinnedToCore(Task_SendData, "Task_SendData", 1024 * 3, NULL, 3, &TaskHandle_SendData, 1);    
     // vTaskSuspend(TaskHandle_SendData);           
-    xTaskCreatePinnedToCore(Task_MenuProcess, "Task_MenuProcess", 1024 * 2, NULL, 1, &TaskHandle_MenuProcess, 1);    
-    xTaskCreatePinnedToCore(Task_ReadRotaryEncoder, "Task_ReadRotary", 1024, NULL, 2, &TaskHandle_ReadRotary, 1);
+    // xTaskCreatePinnedToCore(Task_MenuProcess, "Task_MenuProcess", 1024 * 2, NULL, 1, &TaskHandle_MenuProcess, 1);    
+    // xTaskCreatePinnedToCore(Task_ReadRotaryEncoder, "Task_ReadRotary", 1024, NULL, 2, &TaskHandle_ReadRotary, 1);
+
+    // vTaskStartScheduler();
         
 }
 
@@ -499,24 +501,24 @@ void display_process_fsm(void){
 void Task_ReadSensor(void* pvParameters)
 {
     TickType_t xLastWakeTime = xTaskGetTickCount();    
-    uint16_t gpsSampleCount = 0;
-    uint16_t mpuSampleCount = 0;
-    uint16_t magSampleCount = 0;
+    static uint16_t gpsSampleCount = 0;
+    static uint16_t mpuSampleCount = 0;
+    static uint16_t magSampleCount = 0;
     sensor_data_t oldData;
     static unsigned long taskMillis = 0;
     static unsigned long getDataMillis = 0;  
-    const long taskInterval = 1000;
+    const long taskInterval = 100;
     unsigned long currentMillis = 0;
-    const long getDataInterval = 5;
+    const long getDataInterval = 100;
 
     uint8_t flag = 0;
     
     while(1){                                 
-        if (xSemaphoreTake(xI2CSemaphore, portMAX_DELAY)){                       
+        // if (xSemaphoreTake(xI2CSemaphore, portMAX_DELAY)){                       
             Sensor_Data.trip_number = tripNumber;
             Sensor_Data.routeID = routeID;
             
-            while(1){
+            // while(1){
                 // Mô phỏng tạm tín hiệu điểm ground truth
                 if(flag){
                     Sensor_Data.stationID = 1;
@@ -550,67 +552,70 @@ void Task_ReadSensor(void* pvParameters)
                     mpuSampleCount++;
                                         
                     
-                    Sensor_Data.Gx += eventGyro.gyro.x;
-                    Sensor_Data.Gy += eventGyro.gyro.y;
-                    Sensor_Data.Gz += eventGyro.gyro.z;
+                    Sensor_Data.Gx = eventGyro.gyro.x;
+                    Sensor_Data.Gy = eventGyro.gyro.y;
+                    Sensor_Data.Gz = eventGyro.gyro.z;
                     
-                    Sensor_Data.Magx += eventMag.magnetic.x;
-                    Sensor_Data.Magy += eventMag.magnetic.y;
-                    Sensor_Data.Magz += eventMag.magnetic.z;    
+                    Sensor_Data.Magx = eventMag.magnetic.x ;
+                    Sensor_Data.Magy = eventMag.magnetic.y;
+                    Sensor_Data.Magz = eventMag.magnetic.z;    
         
-                    Sensor_Data.Ax += eventAccel.acceleration.x;
-                    Sensor_Data.Ay += eventAccel.acceleration.y;
-                    Sensor_Data.Az += eventAccel.acceleration.z;
-                }                    
-                
-                if (currentMillis - taskMillis >= taskInterval){
-                    taskMillis = currentMillis;
-                    Sensor_Data.Ax = Sensor_Data.Ax / mpuSampleCount;   
-                    Sensor_Data.Ay = Sensor_Data.Ay / mpuSampleCount;
-                    Sensor_Data.Az = Sensor_Data.Az / mpuSampleCount;
+                    Sensor_Data.Ax = eventAccel.acceleration.x + 0.3;
+                    Sensor_Data.Ay = eventAccel.acceleration.y;
+                    Sensor_Data.Az = eventAccel.acceleration.z - 0.15;
 
-                    Sensor_Data.Gx = Sensor_Data.Gx / mpuSampleCount;
-                    Sensor_Data.Gy = Sensor_Data.Gy / mpuSampleCount;
-                    Sensor_Data.Gz = Sensor_Data.Gz / mpuSampleCount;
-
-                    Sensor_Data.Magx = Sensor_Data.Magx / magSampleCount;
-                    Sensor_Data.Magy = Sensor_Data.Magy / magSampleCount;
-                    Sensor_Data.Magz = Sensor_Data.Magz / magSampleCount;
-
-                    Sensor_Data.lat = Sensor_Data.lat / (double)gpsSampleCount;
-                    Sensor_Data.lng = Sensor_Data.lng / (double)gpsSampleCount;                    
-
-                    mpuSampleCount = 0;
-                    magSampleCount = 0;
-                    gpsSampleCount = 0;
-                    
                     convertData();
                     Serial.println(buffer);  
-                    xQueueSendToBack(ServerDataQueue, &Sensor_Data, portMAX_DELAY);
-                    xSemaphoreGive(xI2CSemaphore);   
+                }                    
+                
+                // if (currentMillis - taskMillis >= taskInterval){
+                //     taskMillis = currentMillis;
+                //     Sensor_Data.Ax = Sensor_Data.Ax / (float)mpuSampleCount;   
+                //     Sensor_Data.Ay = Sensor_Data.Ay / (float)mpuSampleCount;
+                //     Sensor_Data.Az = Sensor_Data.Az / (float)mpuSampleCount;
 
-                    Sensor_Data.Ax = 0;   
-                    Sensor_Data.Ay = 0;
-                    Sensor_Data.Az = 0;
+                //     Sensor_Data.Gx = Sensor_Data.Gx / mpuSampleCount;
+                //     Sensor_Data.Gy = Sensor_Data.Gy / mpuSampleCount;
+                //     Sensor_Data.Gz = Sensor_Data.Gz / mpuSampleCount;
 
-                    Sensor_Data.Gx = 0;
-                    Sensor_Data.Gy = 0;
-                    Sensor_Data.Gz = 0;
+                //     Sensor_Data.Magx = Sensor_Data.Magx / magSampleCount;
+                //     Sensor_Data.Magy = Sensor_Data.Magy / magSampleCount;
+                //     Sensor_Data.Magz = Sensor_Data.Magz / magSampleCount;
 
-                    Sensor_Data.Magx = 0;
-                    Sensor_Data.Magy = 0;
-                    Sensor_Data.Magz = 0;
+                //     Sensor_Data.lat = Sensor_Data.lat / (double)gpsSampleCount;
+                //     Sensor_Data.lng = Sensor_Data.lng / (double)gpsSampleCount;                    
 
-                    Sensor_Data.lat = 0.0;  // Nếu lat là kiểu double
-                    Sensor_Data.lng = 0.0;  // Nếu lng là kiểu double
-                    break;
-                }
+                //     mpuSampleCount = 0;
+                //     magSampleCount = 0;
+                //     gpsSampleCount = 0;
+                    
+                //     convertData();
+                //     Serial.println(buffer);  
+                //     // xQueueSendToBack(ServerDataQueue, &Sensor_Data, portMAX_DELAY);
+                //     // xSemaphoreGive(xI2CSemaphore);   
+
+                //     Sensor_Data.Ax = 0;   
+                //     Sensor_Data.Ay = 0;
+                //     Sensor_Data.Az = 0;
+
+                //     Sensor_Data.Gx = 0;
+                //     Sensor_Data.Gy = 0;
+                //     Sensor_Data.Gz = 0;
+
+                //     Sensor_Data.Magx = 0;
+                //     Sensor_Data.Magy = 0;
+                //     Sensor_Data.Magz = 0;
+
+                //     Sensor_Data.lat = 0.0;  // Nếu lat là kiểu double
+                //     Sensor_Data.lng = 0.0;  // Nếu lng là kiểu double
+                //     break;
+                // }
                 
 
                 // Kalman Filter here
                 
-            }
-        }     
+            // }
+        // }     
         // if (xSemaphoreTake(xI2CSemaphore, portMAX_DELAY)){                    
             
 
