@@ -11,8 +11,10 @@
 #include <Server_Side_RPC.h>
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_HMC5883_U.h>
-#include <rotary_encoder.h>
 
+// Supported library
+#include <rotary_encoder.h>
+#include <compass.h>
 #include <config.h>
 
 SemaphoreHandle_t xI2CSemaphore;
@@ -524,6 +526,8 @@ void Task_ReadSensor(void *pvParameters)
 
     uint8_t flag = 0;
 
+    mag_calibrate_t result_calibrate_mag;
+
     while (1)
     {
         if (xSemaphoreTake(xI2CSemaphore, portMAX_DELAY))
@@ -564,9 +568,10 @@ void Task_ReadSensor(void *pvParameters)
             Sensor_Data.Gy = eventGyro.gyro.y;
             Sensor_Data.Gz = eventGyro.gyro.z;
 
-            Sensor_Data.Magx = eventMag.magnetic.x;
-            Sensor_Data.Magy = eventMag.magnetic.y;
-            Sensor_Data.Magz = eventMag.magnetic.z;
+            calibrateMagnetic(&eventMag, &result_calibrate_mag);
+            Sensor_Data.Magx = result_calibrate_mag.mag_calib_x;
+            Sensor_Data.Magy = result_calibrate_mag.mag_calib_y;
+            Sensor_Data.Magz = result_calibrate_mag.mag_calib_z;            
 
             Sensor_Data.Ax = eventAccel.acceleration.x;
             Sensor_Data.Ay = eventAccel.acceleration.y;
