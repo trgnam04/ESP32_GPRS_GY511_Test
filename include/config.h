@@ -8,9 +8,14 @@
 #undef HTTP    
 #define MQTT   1
 
+#define MS_TO_KMH 18.0f / 5.0f
+#define KMH_TO_MS 5.0f / 18.0f
+
+const float GRAVITY = 9.81;
+
 // set up Wifi
-constexpr char WIFI_SSID[] = "271104E";
-constexpr char WIFI_PASSWORD[] = "1234567890";
+constexpr char WIFI_SSID[] = "v";
+constexpr char WIFI_PASSWORD[] = "12345678";
 constexpr char TOKEN[] = "COLLECTOR";
 
 
