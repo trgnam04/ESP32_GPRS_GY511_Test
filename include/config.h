@@ -1,6 +1,6 @@
 #define MS_TO_KMH 18.0f/5.0f
 #define KMH_TO_MS 5.0f/18.0f
-#define SERIAL_BAUDRATE 9600
+#define SERIAL_BAUDRATE 115200
 #define TX_PIN 18
 #define RX_PIN 17
 #define SDA 21
