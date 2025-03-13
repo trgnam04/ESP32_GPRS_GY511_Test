@@ -450,21 +450,18 @@ void menu_process_fsm(void)
     }
     case STATE_MEASURING:
     {
+        if (isLongPressed())
+        {
+            flushData();
+            resetRotaryEncoder();
+            vTaskSuspend(TaskHandle_ReadSensor);
+            MenuState = STATE_IDLE_MENU;
+        }
         if (xSemaphoreTake(xI2CSemaphore, portMAX_DELAY))
         {
             display_process_fsm();
             xSemaphoreGive(xI2CSemaphore);
-        }
-
-        if (isLongPressed())
-        {
-
-            flushData();
-            resetRotaryEncoder();
-
-            vTaskSuspend(TaskHandle_ReadSensor);
-            MenuState = STATE_IDLE_MENU;
-        }
+        }        
         break;
     }
     }
@@ -521,7 +518,7 @@ void Task_ReadSensor(void *pvParameters)
     unsigned long currentMillis = 0;
     const long getDataInterval = 5;
 
-    Sensor_Data.deltaT = taskInterval / 1000.0;
+    Sensor_Data.deltaT = 100 / 1000.0;
 
     float roll, pitch; // after complementary with ax, ay, az
 
@@ -534,118 +531,83 @@ void Task_ReadSensor(void *pvParameters)
             Sensor_Data.trip_number = tripNumber;
             Sensor_Data.routeID = routeID;
 
-            while (1)
+            // Mô phỏng tạm tín hiệu điểm ground truth
+            if (flag)
             {
-                // Mô phỏng tạm tín hiệu điểm ground truth
-                if (flag)
-                {
-                    Sensor_Data.stationID = 1;
-                }
-                else
-                {
-                    Sensor_Data.stationID = 0;
-                }
-
-                if (isPressed())
-                {
-                    flag = (flag + 1) % 2;
-                }
-
-                if (isLongPressed())
-                {
-                    flag = 0;
-                }
-
-                currentMillis = millis();
-                if (currentMillis - getDataMillis >= getDataInterval)
-                {
-                    getDataMillis = currentMillis;
-                    if (gps.location.isUpdated())
-                    {
-                        Sensor_Data.lat += gps.location.lat();
-                        Sensor_Data.lng += gps.location.lng();
-                        gpsSampleCount++;
-                    }
-
-                    mag.getEvent(&eventMag);
-                    magSampleCount++;
-                    mpu.getEvent(&eventAccel, &eventGyro, &eventTemp);
-                    mpuSampleCount++;
-
-                    Sensor_Data.Gx += eventGyro.gyro.x;
-                    Sensor_Data.Gy += eventGyro.gyro.y;
-                    Sensor_Data.Gz += eventGyro.gyro.z;
-
-                    Sensor_Data.Magx += eventMag.magnetic.x;
-                    Sensor_Data.Magy += eventMag.magnetic.y;
-                    Sensor_Data.Magz += eventMag.magnetic.z;
-
-                    Sensor_Data.Ax += eventAccel.acceleration.x;
-                    Sensor_Data.Ay += eventAccel.acceleration.y;
-                    Sensor_Data.Az += eventAccel.acceleration.z;
-                }
-
-                if (currentMillis - taskMillis >= taskInterval)
-                {
-                    taskMillis = currentMillis;
-                    Sensor_Data.Ax = Sensor_Data.Ax / mpuSampleCount;
-                    Sensor_Data.Ay = Sensor_Data.Ay / mpuSampleCount;
-                    Sensor_Data.Az = Sensor_Data.Az / mpuSampleCount;
-
-                    Sensor_Data.Gx = Sensor_Data.Gx / mpuSampleCount;
-                    Sensor_Data.Gy = Sensor_Data.Gy / mpuSampleCount;
-                    Sensor_Data.Gz = Sensor_Data.Gz / mpuSampleCount;
-
-                    Sensor_Data.Magx = Sensor_Data.Magx / magSampleCount;
-                    Sensor_Data.Magy = Sensor_Data.Magy / magSampleCount;
-                    Sensor_Data.Magz = Sensor_Data.Magz / magSampleCount;
-
-                    Sensor_Data.lat = Sensor_Data.lat / (double)gpsSampleCount;
-                    Sensor_Data.lng = Sensor_Data.lng / (double)gpsSampleCount;
-
-                    mpuSampleCount = 1;
-                    magSampleCount = 1;
-                    gpsSampleCount = 1;
-
-                    float accelRoll = atan2(Sensor_Data.Ay, sqrt(Sensor_Data.Ax * Sensor_Data.Ax + Sensor_Data.Az * Sensor_Data.Az));
-                    float accelPitch = atan2(-Sensor_Data.Ax, sqrt(Sensor_Data.Ay * Sensor_Data.Ay + Sensor_Data.Az * Sensor_Data.Az));
-
-                    // (b) Integrate gyro angles
-                    roll += Sensor_Data.Gx * Sensor_Data.deltaT;
-                    pitch += Sensor_Data.Gy * Sensor_Data.deltaT;
-
-                    // (c) Simple complementary filter
-                    float alpha = 0.5f;
-                    roll = alpha * roll + (1 - alpha) * accelRoll;
-                    pitch = alpha * pitch + (1 - alpha) * accelPitch;
-
-                    // Rotate gravity (0, 0, +GRAVITY) in sensor frame
-                    float gx_comp = sin(pitch) * GRAVITY * -1.0f;              // X comp
-                    float gy_comp = -cos(pitch) * sin(roll) * GRAVITY * -1.0f; // Y comp
-                    float gz_comp = -cos(pitch) * cos(roll) * GRAVITY * -1.0f; // Z comp
-
-                    float ax_linear = Sensor_Data.Ax - gx_comp;
-                    float ay_linear = Sensor_Data.Ay - gy_comp;
-                    float az_linear = Sensor_Data.Az - gz_comp;
-
-                    // 5) Filter the linear acceleration
-                    float beta = 0.9f; // tune
-                    Sensor_Data.AxFilter = beta * Sensor_Data.AxFilter + (1.0f - beta) * ax_linear;
-                    Sensor_Data.AyFilter = beta * Sensor_Data.AyFilter + (1.0f - beta) * ay_linear;
-                    Sensor_Data.AzFilter = beta * Sensor_Data.AzFilter + (1.0f - beta) * az_linear;
-
-                    convertData();
-                    Serial.println(buffer);
-                    xQueueSendToBack(ServerDataQueue, &Sensor_Data, portMAX_DELAY);
-                    xSemaphoreGive(xI2CSemaphore);
-                    break;
-                }
-
-                // Kalman Filter here
+                Sensor_Data.stationID = 1;
             }
-        }        
+            else
+            {
+                Sensor_Data.stationID = 0;
+            }
 
-        vTaskDelayUntil(&xLastWakeTime, 10);
+            if (isPressed())
+            {
+                flag = (flag + 1) % 2;
+            }
+
+            if (isLongPressed())
+            {
+                flag = 0;
+            }
+
+            if (gps.location.isUpdated())
+            {
+                Sensor_Data.lat = gps.location.lat();
+                Sensor_Data.lng = gps.location.lng();
+            }
+
+            mag.getEvent(&eventMag);
+            mpu.getEvent(&eventAccel, &eventGyro, &eventTemp);
+
+            Sensor_Data.Gx = eventGyro.gyro.x;
+            Sensor_Data.Gy = eventGyro.gyro.y;
+            Sensor_Data.Gz = eventGyro.gyro.z;
+
+            Sensor_Data.Magx = eventMag.magnetic.x;
+            Sensor_Data.Magy = eventMag.magnetic.y;
+            Sensor_Data.Magz = eventMag.magnetic.z;
+
+            Sensor_Data.Ax = eventAccel.acceleration.x;
+            Sensor_Data.Ay = eventAccel.acceleration.y;
+            Sensor_Data.Az = eventAccel.acceleration.z;
+
+            float accelRoll = atan2(Sensor_Data.Ay, sqrt(Sensor_Data.Ax * Sensor_Data.Ax + Sensor_Data.Az * Sensor_Data.Az));
+            float accelPitch = atan2(-Sensor_Data.Ax, sqrt(Sensor_Data.Ay * Sensor_Data.Ay + Sensor_Data.Az * Sensor_Data.Az));
+
+            // (b) Integrate gyro angles
+            roll += Sensor_Data.Gx * Sensor_Data.deltaT;
+            pitch += Sensor_Data.Gy * Sensor_Data.deltaT;
+
+            // (c) Simple complementary filter
+            float alpha = 0.4f;
+            roll = alpha * roll + (1 - alpha) * accelRoll;
+            pitch = alpha * pitch + (1 - alpha) * accelPitch;
+
+            // Rotate gravity (0, 0, +GRAVITY) in sensor frame
+            float gx_comp = sin(pitch) * GRAVITY * -1.0f;              // X comp
+            float gy_comp = -cos(pitch) * sin(roll) * GRAVITY * -1.0f; // Y comp
+            float gz_comp = -cos(pitch) * cos(roll) * GRAVITY * -1.0f; // Z comp
+
+            float ax_linear = Sensor_Data.Ax - gx_comp;
+            float ay_linear = Sensor_Data.Ay - gy_comp;
+            float az_linear = Sensor_Data.Az - gz_comp;
+
+            // 5) Filter the linear acceleration
+            float beta = 0.9f; // tune
+            Sensor_Data.AxFilter = beta * Sensor_Data.AxFilter + (1.0f - beta) * ax_linear;
+            Sensor_Data.AyFilter = beta * Sensor_Data.AyFilter + (1.0f - beta) * ay_linear;
+            Sensor_Data.AzFilter = beta * Sensor_Data.AzFilter + (1.0f - beta) * az_linear;
+
+            convertData();
+            Serial.println(buffer);
+            xQueueSendToBack(ServerDataQueue, &Sensor_Data, portMAX_DELAY);
+
+            xSemaphoreGive(xI2CSemaphore);
+            // Kalman Filter here
+        }
+
+        vTaskDelay(100);
         /* Delay before the next sample */
     }
 }
