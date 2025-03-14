@@ -61,6 +61,9 @@ typedef struct
     float AyFilter = 0;
     float AzFilter = 0;
 
+    float velocityN = 0;
+    float velocityE = 0;
+
     float deltaT = 0;
     uint16_t trip_number = 0;
     uint16_t routeID = 0;
@@ -519,6 +522,8 @@ void Task_ReadSensor(void *pvParameters)
     const long taskInterval = 1000;
     unsigned long currentMillis = 0;
     const long getDataInterval = 5;
+    float v_x;
+    float v_y;
 
     Sensor_Data.deltaT = 100 / 1000.0;
 
@@ -603,6 +608,12 @@ void Task_ReadSensor(void *pvParameters)
             Sensor_Data.AxFilter = beta * Sensor_Data.AxFilter + (1.0f - beta) * ax_linear;
             Sensor_Data.AyFilter = beta * Sensor_Data.AyFilter + (1.0f - beta) * ay_linear;
             Sensor_Data.AzFilter = beta * Sensor_Data.AzFilter + (1.0f - beta) * az_linear;
+            
+            // v_x += Sensor_Data.AxFilter * Sensor_Data.deltaT;
+            // v_y += Sensor_Data.AyFilter * Sensor_Data.deltaT;            
+
+            Serial.printf("%.6f\t%.6f\t", v_x, v_y);
+            
 
             convertData();
             Serial.println(buffer);
