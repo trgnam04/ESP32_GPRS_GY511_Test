@@ -1,7 +1,5 @@
 #ifndef COMPASS_H
 #define COMPASS_H
-#include <Adafruit_MPU6050.h>
-#include <Adafruit_HMC5883_U.h>
 #include <Adafruit_Sensor.h>
 struct mag_calibrate_t
 {

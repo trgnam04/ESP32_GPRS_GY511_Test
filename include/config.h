@@ -1,5 +1,3 @@
-#define MS_TO_KMH 18.0f/5.0f
-#define KMH_TO_MS 5.0f/18.0f
 #define SERIAL_BAUDRATE 115200
 #define TX_PIN 18
 #define RX_PIN 17
@@ -27,10 +25,6 @@ constexpr char COLLECTOR_KEY_LNG[] = "lng";
 constexpr char COLLECTOR_KEY_ACCEL_X[] = "accX";
 constexpr char COLLECTOR_KEY_ACCEL_Y[] = "accY";
 constexpr char COLLECTOR_KEY_ACCEL_Z[] = "accZ";
-constexpr char COLLECTOR_KEY_MAG_X[] = "magX";
-constexpr char COLLECTOR_KEY_MAG_Y[] = "magY";
-constexpr char COLLECTOR_KEY_MAG_Z[] = "magZ";
-constexpr char COLLECTOR_KEY_GYRO_X[] = "gyroX";
-constexpr char COLLECTOR_KEY_GYRO_Y[] = "gyroY";
-constexpr char COLLECTOR_KEY_GYRO_Z[] = "gyroZ";
+constexpr char COLLECTOR_KEY_VELOCITY_NORTH[] = "v_n";
+constexpr char COLLECTOR_KEY_VELOCITY_EAST[] = "v_e";
 constexpr char COLLECTOR_KEY_STATION_ID[] = "Station-ID";
