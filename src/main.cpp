@@ -1,4 +1,3 @@
-#include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
 #include <TinyGPSPlus.h>
 #include <Wire.h>
@@ -10,6 +9,11 @@
 #include <Arduino_MQTT_Client.h>
 #include <Server_Side_RPC.h>
 #include <ThingsBoard.h>
+
+#include <Wire.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BNO055.h>
+#include <utility/imumaths.h>
 
 #define MS_TO_KMH 18.0f / 5.0f
 #define KMH_TO_MS 5.0f / 18.0f
@@ -44,7 +48,7 @@ constexpr char COLLECTOR_KEY_GYRO_Y[] = "gyroY";
 constexpr char COLLECTOR_KEY_GYRO_Z[] = "gyroZ";
 constexpr char COLLECTOR_KEY_DELTA_T[] = "deltaT";
 // =============================================================== Object
-Adafruit_MPU6050 mpu;
+Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28, &Wire);
 TinyGPSPlus gps;
 SoftwareSerial ss(RXPin, TXPin);
 QueueHandle_t gpsQueue;
@@ -63,33 +67,24 @@ ThingsBoard tb(mqttClient, MAX_MESSAGE_RECEIVE_SIZE, MAX_MESSAGE_SEND_SIZE, Defa
 void InitWiFi();
 bool reconnect();
 void sendTelemetryData();
+void printEvent(sensors_event_t* event);
 // ==================================================================================== SETUP
 void setup(void)
 {
   Serial.begin(9600);
-  InitWiFi();
+  // InitWiFi();
   ss.begin(GPSBaud);
   while (!Serial)
     delay(10); // will pause Zero, Leonardo, etc until serial console opens
 
-  Serial.println("Adafruit MPU6050 test!");
-
-  // Try to initialize!
-  if (!mpu.begin())
-  {
-    Serial.println("Failed to find MPU6050 chip");
-    while (1)
+    Serial.println("Orientation Sensor Test"); Serial.println("");
+    if (!bno.begin())
     {
-      delay(10);
-    }
-  }
-  Serial.println("MPU6050 Found!");
-
-  mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
-  
-  mpu.setGyroRange(MPU6050_RANGE_500_DEG);
-
-  mpu.setFilterBandwidth(MPU6050_BAND_260_HZ);
+      /* There was a problem detecting the BNO055 ... check your connections */
+      Serial.print("Ooops, no BNO055 detected ... Check your wiring or I2C ADDR!");
+      while (1);
+    };
+    delay(1000);
 }
 sensors_event_t a, g, temp;
 
@@ -109,6 +104,7 @@ const long getDataInterval = 10;
 
 const float dt = float(taskInterval) / 1000.0;
 
+uint16_t BNO055_SAMPLERATE_DELAY_MS = 100;
 //================================================ variable for calculate
 unsigned int count_for_mean = 0;
 float roll, pitch; // after complementary with ax, ay, az
@@ -126,111 +122,139 @@ float gx_temp = 0.0f, gy_temp = 0.0f, gz_temp = 0.0f;
 void loop()
 {
   // Get data
-  mpu.getEvent(&a, &g, &temp);
-  currentMillis = millis();
+  sensors_event_t orientationData , angVelocityData , linearAccelData, magnetometerData, accelerometerData, gravityData;
+  bno.getEvent(&orientationData, Adafruit_BNO055::VECTOR_EULER);
+  bno.getEvent(&angVelocityData, Adafruit_BNO055::VECTOR_GYROSCOPE);
+  bno.getEvent(&linearAccelData, Adafruit_BNO055::VECTOR_LINEARACCEL);
+  bno.getEvent(&magnetometerData, Adafruit_BNO055::VECTOR_MAGNETOMETER);
+  bno.getEvent(&accelerometerData, Adafruit_BNO055::VECTOR_ACCELEROMETER);
+  bno.getEvent(&gravityData, Adafruit_BNO055::VECTOR_GRAVITY);
 
-  ax_temp = a.acceleration.x; ay_temp = a.acceleration.y; az_temp = a.acceleration.z + 0.1;
-  gx_temp = g.gyro.x; gy_temp = g.gyro.y; gz_temp = g.gyro.z;
+  printEvent(&orientationData);
+  printEvent(&angVelocityData);
+  printEvent(&linearAccelData);
+  printEvent(&magnetometerData);
+  printEvent(&accelerometerData);
+  printEvent(&gravityData);
 
-  if (currentMillis - getDataMillis >= getDataInterval)
-  { // ============================================ MEAN
-    getDataMillis = currentMillis;
+  uint8_t system, gyro, accel, mag = 0;
+  bno.getCalibration(&system, &gyro, &accel, &mag);
+  Serial.println();
+  Serial.print("Calibration: Sys=");
+  Serial.print(system);
+  Serial.print(" Gyro=");
+  Serial.print(gyro);
+  Serial.print(" Accel=");
+  Serial.print(accel);
+  Serial.print(" Mag=");
+  Serial.println(mag);
+  delay(BNO055_SAMPLERATE_DELAY_MS);
+  // currentMillis = millis();
 
-    ax += ax_temp;
-    ay += ay_temp;
-    az += az_temp;
-    gx += gx_temp;
-    gy += gy_temp;
-    gz += gz_temp;
-    count_for_mean += 1;
-  }
+  // ax_temp = a.acceleration.x; ay_temp = a.acceleration.y; az_temp = a.acceleration.z + 0.1;
+  // gx_temp = g.gyro.x; gy_temp = g.gyro.y; gz_temp = g.gyro.z;
 
-  if(currentMillis - gps_process_millis >= 10){ // ==================================================== ENCODE GPS
-    gps_process_millis = currentMillis;
-    while (ss.available() > 0)
-    if (gps.encode(ss.read()))
-    {
-      if (gps.location.isValid())
-      {
-        lat = gps.location.lat();
-        lng = gps.location.lng();
-      }
-  };
-  }
+  // if (currentMillis - getDataMillis >= getDataInterval)
+  // { // ============================================ MEAN
+  //   getDataMillis = currentMillis;
 
-  if (currentMillis - taskMillis >= taskInterval)
-  { // ============================================= FILTER Gravity
-    taskMillis = currentMillis;
-    // average from 100 measurement
-    ax = ax / (float)count_for_mean;
-    ay = ay / (float)count_for_mean;
-    az = az / (float)count_for_mean;
-    gx = gx / (float)count_for_mean;
-    gy = gy / (float)count_for_mean;
-    gz = gz / (float)count_for_mean;
-    count_for_mean = 1;
+  //   ax += ax_temp;
+  //   ay += ay_temp;
+  //   az += az_temp;
+  //   gx += gx_temp;
+  //   gy += gy_temp;
+  //   gz += gz_temp;
+  //   count_for_mean += 1;
+  // }
 
-    float accelRoll = atan2(ay, sqrt(ax * ax + az * az));
-    float accelPitch = atan2(-ax, sqrt(ay * ay + az * az));
+  // if(currentMillis - gps_process_millis >= 10){ // ==================================================== ENCODE GPS
+  //   gps_process_millis = currentMillis;
+  //   while (ss.available() > 0)
+  //   if (gps.encode(ss.read()))
+  //   {
+  //     if (gps.location.isValid())
+  //     {
+  //       lat = gps.location.lat();
+  //       lng = gps.location.lng();
+  //     }
+  // };
+  // }
 
-    // (b) Integrate gyro angles
-    roll += gx * dt;
-    pitch += gy * dt;
+  // if (currentMillis - taskMillis >= taskInterval)
+  // { // ============================================= FILTER Gravity
+  //   taskMillis = currentMillis;
+  //   // average from 100 measurement
+  //   ax = ax / (float)count_for_mean;
+  //   ay = ay / (float)count_for_mean;
+  //   az = az / (float)count_for_mean;
+  //   gx = gx / (float)count_for_mean;
+  //   gy = gy / (float)count_for_mean;
+  //   gz = gz / (float)count_for_mean;
+  //   count_for_mean = 1;
 
-    // (c) Simple complementary filter
-    float alpha = 0.5f;
-    roll = alpha * roll + (1 - alpha) * accelRoll;
-    pitch = alpha * pitch + (1 - alpha) * accelPitch;
+  //   float accelRoll = atan2(ay, sqrt(ax * ax + az * az));
+  //   float accelPitch = atan2(-ax, sqrt(ay * ay + az * az));
 
-    // Rotate gravity (0, 0, +GRAVITY) in sensor frame
-    float gx_comp = sin(pitch) * GRAVITY * -1.0f;              // X comp
-    float gy_comp = -cos(pitch) * sin(roll) * GRAVITY * -1.0f; // Y comp
-    float gz_comp = -cos(pitch) * cos(roll) * GRAVITY * -1.0f; // Z comp
+  //   // (b) Integrate gyro angles
+  //   roll += gx * dt;
+  //   pitch += gy * dt;
 
-    ax_linear = ax - gx_comp;
-    ay_linear = ay - gy_comp;
-    float az_linear = az - gz_comp;
+  //   // (c) Simple complementary filter
+  //   float alpha = 0.5f;
+  //   roll = alpha * roll + (1 - alpha) * accelRoll;
+  //   pitch = alpha * pitch + (1 - alpha) * accelPitch;
 
-    // 5) Filter the linear acceleration
-    float beta = 0.9f; // tune
-    ax_filtered = beta * ax_filtered + (1.0f - beta) * ax_linear;
-    ay_filtered = beta * ay_filtered + (1.0f - beta) * ay_linear;
-    az_filtered = beta * az_filtered + (1.0f - beta) * az_linear;
+  //   // Rotate gravity (0, 0, +GRAVITY) in sensor frame
+  //   float gx_comp = sin(pitch) * GRAVITY * -1.0f;              // X comp
+  //   float gy_comp = -cos(pitch) * sin(roll) * GRAVITY * -1.0f; // Y comp
+  //   float gz_comp = -cos(pitch) * cos(roll) * GRAVITY * -1.0f; // Z comp
+
+  //   ax_linear = ax - gx_comp;
+  //   ay_linear = ay - gy_comp;
+  //   float az_linear = az - gz_comp;
+
+  //   // 5) Filter the linear acceleration
+  //   float beta = 0.9f; // tune
+  //   ax_filtered = beta * ax_filtered + (1.0f - beta) * ax_linear;
+  //   ay_filtered = beta * ay_filtered + (1.0f - beta) * ay_linear;
+  //   az_filtered = beta * az_filtered + (1.0f - beta) * az_linear;
 
 
-    if (gps.location.isUpdated()) // Nếu có dữ liệu mới
-    {
-      Serial.print("Latitude: ");
-      Serial.print(gps.location.lat(), 6);
-      Serial.print(", Longitude: ");
-      Serial.println(gps.location.lng(), 6);
-    }
-    // Plot
-    Serial.print(ax);Serial.print("\t");Serial.print(ay);Serial.print("\t");Serial.print(az);Serial.print("\t");
-    // Serial.print(gx); Serial.print("\t"); Serial.print(gy); Serial.print("\t"); Serial.println(gz);
-    // Serial.print(ax_linear); Serial.print("\t"); Serial.print(ay_linear); Serial.print("\t"); Serial.println(az_linear); Serial.print("\t");
-    // Serial.print(vx); Serial.print("\t"); Serial.print(vy); Serial.print("\t"); Serial.println(vz);
-    // Serial.print(offset_ax); Serial.print("\t"); Serial.print(offset_ay); Serial.print("\t"); Serial.print(offset_az); Serial.print("\t");
-    // Serial.print(offset_gx); Serial.print("\t"); Serial.print(offset_gy); Serial.print("\t"); Serial.println(offset_gz);
-    Serial.print(ax_linear); Serial.print("\t"); Serial.print(ay_linear); Serial.print("\t");
-    Serial.print(lat, 6); Serial.print("\t"); Serial.println(lng, 6);
-  };
+  //   if (gps.location.isUpdated()) // Nếu có dữ liệu mới
+  //   {
+  //     Serial.print("Latitude: ");
+  //     Serial.print(gps.location.lat(), 6);
+  //     Serial.print(", Longitude: ");
+  //     Serial.println(gps.location.lng(), 6);
+  //   }
+  //   // Plot
+  //   Serial.print(ax);Serial.print("\t");Serial.print(ay);Serial.print("\t");Serial.print(az);Serial.print("\t");
+  //   // Serial.print(gx); Serial.print("\t"); Serial.print(gy); Serial.print("\t"); Serial.println(gz);
+  //   // Serial.print(ax_linear); Serial.print("\t"); Serial.print(ay_linear); Serial.print("\t"); Serial.println(az_linear); Serial.print("\t");
+  //   // Serial.print(vx); Serial.print("\t"); Serial.print(vy); Serial.print("\t"); Serial.println(vz);
+  //   // Serial.print(offset_ax); Serial.print("\t"); Serial.print(offset_ay); Serial.print("\t"); Serial.print(offset_az); Serial.print("\t");
+  //   // Serial.print(offset_gx); Serial.print("\t"); Serial.print(offset_gy); Serial.print("\t"); Serial.println(offset_gz);
+  //   Serial.print(ax_linear); Serial.print("\t"); Serial.print(ay_linear); Serial.print("\t");
+  //   Serial.print(lat, 6); Serial.print("\t"); Serial.println(lng, 6);
+  // };
 
   // publish to server
-  if (!reconnect()) {
-    return;
-  }
+  // if (!reconnect()) {
+  //   return;
+  // }
 
-  if (!tb.connected()) {
-    Serial.printf("Connecting to: (%s) with token (%s)\n", THINGSBOARD_SERVER, TOKEN);
-    if (!tb.connect(THINGSBOARD_SERVER, TOKEN, THINGSBOARD_PORT)) {
-      Serial.println("Failed to connect");
-      return;
-    }
-  };
-  sendTelemetryData();
-  tb.loop();
+  // if (!tb.connected()) {
+  //   Serial.printf("Connecting to: (%s) with token (%s)\n", THINGSBOARD_SERVER, TOKEN);
+  //   if (!tb.connect(THINGSBOARD_SERVER, TOKEN, THINGSBOARD_PORT)) {
+  //     Serial.println("Failed to connect");
+  //     return;
+  //   }
+  // };
+  // sendTelemetryData();
+  // tb.loop();
 };
+
+
 
 void sendTelemetryData(){
   data[COLLECTOR_KEY_LNG] = lng;
@@ -263,6 +287,60 @@ bool reconnect() {
 };
 
 
-  
+void printEvent(sensors_event_t* event) {
+  double x = -1000000, y = -1000000 , z = -1000000; //dumb values, easy to spot problem
+  if (event->type == SENSOR_TYPE_ACCELEROMETER) {
+    Serial.print("Accl:");
+    x = event->acceleration.x;
+    y = event->acceleration.y;
+    z = event->acceleration.z;
+  }
+  else if (event->type == SENSOR_TYPE_ORIENTATION) {
+    Serial.print("Orient:");
+    x = event->orientation.x;
+    y = event->orientation.y;
+    z = event->orientation.z;
+  }
+  else if (event->type == SENSOR_TYPE_MAGNETIC_FIELD) {
+    Serial.print("Mag:");
+    x = event->magnetic.x;
+    y = event->magnetic.y;
+    z = event->magnetic.z;
+  }
+  else if (event->type == SENSOR_TYPE_GYROSCOPE) {
+    Serial.print("Gyro:");
+    x = event->gyro.x;
+    y = event->gyro.y;
+    z = event->gyro.z;
+  }
+  else if (event->type == SENSOR_TYPE_ROTATION_VECTOR) {
+    Serial.print("Rot:");
+    x = event->gyro.x;
+    y = event->gyro.y;
+    z = event->gyro.z;
+  }
+  else if (event->type == SENSOR_TYPE_LINEAR_ACCELERATION) {
+    Serial.print("Linear:");
+    x = event->acceleration.x;
+    y = event->acceleration.y;
+    z = event->acceleration.z;
+  }
+  else if (event->type == SENSOR_TYPE_GRAVITY) {
+    Serial.print("Gravity:");
+    x = event->acceleration.x;
+    y = event->acceleration.y;
+    z = event->acceleration.z;
+  }
+  else {
+    Serial.print("Unk:");
+  }
+
+  Serial.print("\tx= ");
+  Serial.print(x);
+  Serial.print(" |\ty= ");
+  Serial.print(y);
+  Serial.print(" |\tz= ");
+  Serial.println(z);
+}
 
   
