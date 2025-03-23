@@ -16,6 +16,8 @@
 #include <utility/imumaths.h>
 #include <U8g2lib.h>
 
+#include <utils.h>
+
 
 #define MS_TO_KMH 18.0f / 5.0f
 #define KMH_TO_MS 5.0f / 18.0f
@@ -23,52 +25,11 @@
 U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/U8X8_PIN_NONE);
 
 // ================================================================ CONST
-const int RXPin = 17, TXPin = 18;
-const uint32_t GPSBaud = 9600;
-const float GRAVITY = 9.81;
 
-constexpr char WIFI_SSID[] = "271104E";
-constexpr char WIFI_PASSWORD[] = "1234567890";
-
-constexpr char TOKEN[] = "COLLECTOR";
-constexpr char THINGSBOARD_SERVER[] = "app.coreiot.io";
-constexpr uint16_t THINGSBOARD_PORT = 1883U;
-constexpr uint16_t MAX_MESSAGE_SEND_SIZE = 256U;
-constexpr uint16_t MAX_MESSAGE_RECEIVE_SIZE = 256U;
-
-constexpr uint8_t MAX_RPC_SUBSCRIPTIONS = 10U;
-constexpr uint8_t MAX_RPC_RESPONSE = 10U;
-
-constexpr char COLLECTOR_KEY_LAT[] = "lat";
-constexpr char COLLECTOR_KEY_LNG[] = "lng";
-constexpr char COLLECTOR_KEY_ACCEL_X[] = "accX";
-constexpr char COLLECTOR_KEY_ACCEL_Y[] = "accY";
-constexpr char COLLECTOR_KEY_ACCEL_Z[] = "accZ";
-constexpr char COLLECTOR_KEY_MAG_X[] = "magX";
-constexpr char COLLECTOR_KEY_MAG_Y[] = "magY";
-constexpr char COLLECTOR_KEY_MAG_Z[] = "magZ";
-constexpr char COLLECTOR_KEY_GYRO_X[] = "gyroX";
-constexpr char COLLECTOR_KEY_GYRO_Y[] = "gyroY";
-constexpr char COLLECTOR_KEY_GYRO_Z[] = "gyroZ";
-constexpr char COLLECTOR_KEY_DELTA_T[] = "deltaT";
 // =============================================================== Object
 Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28, &Wire);
-TinyGPSPlus gps;
-SoftwareSerial ss(RXPin, TXPin);
-QueueHandle_t gpsQueue;
-
-WiFiClient espClient;
-Arduino_MQTT_Client mqttClient(espClient);
-Server_Side_RPC<MAX_RPC_SUBSCRIPTIONS, MAX_RPC_RESPONSE> rpc;
-const std::array<IAPI_Implementation *, 1U> apis = {
-    &rpc};
-ThingsBoard tb(mqttClient, MAX_MESSAGE_RECEIVE_SIZE, MAX_MESSAGE_SEND_SIZE, Default_Max_Stack_Size, apis);
-
 // =================================================================== Funciton prototype
-void InitWiFi();
-bool reconnect();
-void sendTelemetryData();
-void printEvent(sensors_event_t *event);
+void kalman_filter(float a_measured, float dt, float& v, float& b_a, float P[2][2]);
 float calculate_std_deviation(float arr[], int n);
 // ==================================================================================== SETUP
 
@@ -77,8 +38,6 @@ sensors_event_t a, g, temp;
 //================================================ variable for data
 double ax = 0.0f, ay = 0.0f, az = 0.0f, gx = 0.0f, gy = 0.0f, gz = 0.0f;
 double lat = 0.0f, lng = 0.0f;
-
-DynamicJsonDocument data(256);
 //================================================ variable for timer
 static unsigned long taskMillis = 0;
 static unsigned long getDataMillis = 0;
@@ -91,6 +50,8 @@ const long getDataInterval = 10;
 const float dt = float(taskInterval) / 1000.0;
 
 uint16_t BNO055_SAMPLERATE_DELAY_MS = 20;
+
+adafruit_bno055_opmode_t opmode = OPERATION_MODE_NDOF;
 //================================================ variable for calculate
 unsigned int count_for_mean = 0;
 float roll, pitch; // after complementary with ax, ay, az
@@ -132,18 +93,23 @@ void displayCalibrationStatus() {
   } while (u8g2.nextPage());
 }
 
-void displayVelocity(float Vx, float Vy) {
+void displayVelocity(float V_B, float V_D, float Speed) {
   u8g2.firstPage();
   do {
-      u8g2.setFont(u8g2_font_ncenB08_tr);
+    u8g2.setFont(u8g2_font_6x12_tf);
       u8g2.setCursor(10, 20);
-      u8g2.print("Vx: ");
-      u8g2.print(Vx);
+      u8g2.print("V_B: ");
+      u8g2.print(V_B * MS_TO_KMH);
       u8g2.print(" Km/h");
       
-      u8g2.setCursor(10, 40);
-      u8g2.print("Vy: ");
-      u8g2.print(Vy);
+      u8g2.setCursor(10, 35);
+      u8g2.print("V_D: ");
+      u8g2.print(V_D * MS_TO_KMH);
+      u8g2.print(" Km/h");
+
+      u8g2.setCursor(10, 50);
+      u8g2.print("Speed: ");
+      u8g2.print(Speed * MS_TO_KMH);
       u8g2.print(" Km/h");
   } while (u8g2.nextPage());
 }
@@ -158,7 +124,7 @@ void setup() {
       while (1);
   }
   
-  
+  bno.setMode(opmode);
   // Hiển thị trạng thái hiệu chỉnh
   while (true) {
       uint8_t sys, gyro, accel, mag;
@@ -177,81 +143,150 @@ void setup() {
 
 
 // TODO
-// ax_filter, ay_filter, lat, lon, deltaT, real_velocity
 // ==================================================================================== LOOP
 // Khai báo biến toàn cục
-// Khai báo biến toàn cục
+float speed = 0.0;
 float vx = 0.0f, vy = 0.0f;
 float prevAx = 0.0f, prevAy = 0.0f; // Lưu giá trị gia tốc trước đó
-float arrDataX[10], arrDataY[10];
-int arr_countX = 0, arr_countY = 0;
-int stop_count = 0, moving_count = 0;
 unsigned long lastTime = 0; // Thời gian lần đo trước đó
+unsigned long velocityResetTimer = 0; // Bộ đếm thời gian reset vận tốc
+float b_ax = 0.0f, b_ay = 0.0f; // Bias gia tốc trục x, y
+float Px[2][2] = {{1.0f, 0.0f}, {0.0f, 1.0f}}; // Ma trận hiệp phương sai cho trục x
+float Py[2][2] = {{1.0f, 0.0f}, {0.0f, 1.0f}}; // Ma trận hiệp phương sai cho trục y
+float Q[2][2] = {{0.001f, 0.0f}, {0.0f, 0.0001f}}; // Process noise
+float R = 0.01f; // Measurement noise
+
+// Ngưỡng để phát hiện trạng thái dừng
+const float threshold_accel = 0.3f;  // m/s²
+const float threshold_gyro = 5.5f;  // rad/s
+const unsigned long stop_detection_time = 1000;  // 1 giây
+unsigned long stop_timer = 0;  // Bộ đếm thời gian để xác định trạng thái dừng
+bool is_stopped = false;  // Trạng thái xe dừng
+
+// Để phát hiện chuyển động đều
+const int speed_window_size = 25;  // 5 giây với delay 200ms (25 mẫu x 200ms = 5s)
+float speed_history[speed_window_size];  // Mảng lưu lịch sử vận tốc
+int speed_index = 0;  // Chỉ số hiện tại trong mảng
+bool speed_history_full = false;  // Cờ kiểm tra mảng đã đầy chưa
 
 void loop() {
-  // Lấy dữ liệu gia tốc
-  sensors_event_t linearAccelData;
-  bno.getEvent(&linearAccelData, Adafruit_BNO055::VECTOR_LINEARACCEL);
+  // Lấy dữ liệu từ BNO055
+  imu::Vector<3> linearAccel = bno.getVector(Adafruit_BNO055::VECTOR_LINEARACCEL);
+  imu::Vector<3> gyro = bno.getVector(Adafruit_BNO055::VECTOR_GYROSCOPE);
+  imu::Quaternion quat = bno.getQuat();
 
-  // Tính thời gian delta (Δt) theo giây
+  // Tính thời gian delta (Δt)
   unsigned long currentTime = millis();
-  float dt = (currentTime - lastTime) / 1000.0; // Chuyển ms thành giây
+  float dt = (currentTime - lastTime) / 1000.0f;
   lastTime = currentTime;
 
-  // Lưu giá trị gia tốc hiện tại
-  float ax = linearAccelData.acceleration.x;
-  float ay = linearAccelData.acceleration.y;
+  // Gia tốc đo được
+  float ax_measured = linearAccel.x();
+  float ay_measured = linearAccel.y();
+  float az_measured = linearAccel.z();
 
-  arrDataX[arr_countX++] = ax;
-  arrDataY[arr_countY++] = ay;
+  // Tính norm của gia tốc tuyến tính và tốc độ góc
+  float norm_accel = sqrt(ax_measured * ax_measured + ay_measured * ay_measured);
+  float gx = gyro.x();
+  float gy = gyro.y();
+  float gz = gyro.z();
+  float norm_gyro = sqrt(gx * gx + gy * gy);
 
-  // Tính gia tốc trung điểm (a_mid)
-  float a_mid_x = (ax + prevAx) / 2.0f;
-  float a_mid_y = (ay + prevAy) / 2.0f;
-
-  // Tính vận tốc theo Midpoint Riemann Sum
-  vx += a_mid_x * dt;
-  vy += a_mid_y * dt;
-
-  // Cập nhật giá trị gia tốc trước đó
-  prevAx = ax;
-  prevAy = ay;
-
-  // Hiển thị kết quả vận tốc
-  Serial.print("vx: "); Serial.print(vx);
-  Serial.print("\tvy: "); Serial.println(vy);
-
-  // Kiểm tra khi mảng đủ dữ liệu
-  if (arr_countX == 10 && arr_countY == 10) {
-    float stdX = calculate_std_deviation(arrDataX, 10);
-    float stdY = calculate_std_deviation(arrDataY, 10);
-
-    // Kiểm tra trạng thái dừng hay di chuyển
-    if (stdX < 0.25 && stdY < 0.21) stop_count++;
-    else moving_count++;
-
-    // Reset vận tốc khi phát hiện dừng
-    if (stop_count == 3) {
-      Serial.println("STOP");
-      vx = 0.0f; vy = 0.0f; // Reset vận tốc
-      stop_count = 0;
+  // Kiểm tra trạng thái dừng
+  if (norm_accel < threshold_accel && norm_gyro < threshold_gyro){
+    if (stop_timer == 0) {
+      stop_timer = currentTime;
+    } else if (currentTime - stop_timer >= stop_detection_time) {
+      is_stopped = true;
+      vx = 0.0f;
+      vy = 0.0f;
+      Serial.print("Xe dung");
     }
-    if (moving_count == 3) {
-      Serial.println("MOVING");
-      moving_count = 0;
-    }
-
-    // Reset bộ đếm mảng
-    arr_countX = 0;
-    arr_countY = 0;
+  } else {
+    stop_timer = 0;
+    is_stopped = false;
   }
 
-  // Hiển thị vận tốc lên màn hình
-  displayVelocity(vx, vy);
+  // Cập nhật Kalman nếu xe không dừng
+  if (!is_stopped) {
+    kalman_filter(ax_measured, dt, vx, b_ax, Px);
+    kalman_filter(ay_measured, dt, vy, b_ay, Py);
+  }
+
+  // Tính góc heading từ quaternion
+  float headingRadians = atan2(2.0f * (quat.x() * quat.w() + quat.y() * quat.z()), 
+                               1.0f - 2.0f * (quat.x() * quat.x() + quat.y() * quat.y()));
+  
+  // Tính vận tốc hướng Bắc và Đông
+  float v_B = 0.0f, v_D = 0.0f;
+  calculateNorthEastVelocity(vx, vy, headingRadians, v_B, v_D);
+
+  // Tính tốc độ tổng hợp
+  speed = sqrt(v_B * v_B + v_D * v_D);
+
+  // Lưu trữ vận tốc để kiểm tra chuyển động đều
+  speed_history[speed_index] = speed;
+  speed_index = (speed_index + 1) % speed_window_size;
+  if (speed_index == 0) speed_history_full = true;
+
+  // Kiểm tra chuyển động đều
+  if (speed_history_full && !is_stopped) {
+    float std_dev = calculate_std_deviation(speed_history, speed_window_size);
+    if (std_dev < 0.25f) {
+      Serial.print("Xe chuyen dong deu");
+    } else {
+      Serial.print("Xe dang chuyen dong");
+    }
+  }
+
+  // Hiển thị kết quả
+  Serial.printf("\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\n", v_B, v_D, speed, norm_accel, norm_gyro, ax_measured, ay_measured, gx, gy);
+  
+  // // // Reset vận tốc sau 5 giây (giữ nguyên logic cũ)
+  // if (currentTime - velocityResetTimer >= 5000) {
+  //   vx = 0.0f;
+  //   vy = 0.0f;
+  //   velocityResetTimer = currentTime;
+  //   Serial.println("Velocity reset to 0");
+  // }
+
+  // Hiển thị lên màn hình
+  displayVelocity(v_B, v_D, speed);
 
   delay(BNO055_SAMPLERATE_DELAY_MS);
 }
 
+// Hàm bộ lọc Kalman cho một trục
+void kalman_filter(float a_measured, float dt, float& v, float& b_a, float P[2][2]) {
+  // Dự đoán
+  float v_pred = v + (a_measured - b_a) * dt;
+  float b_a_pred = b_a;
+
+  // Cập nhật ma trận hiệp phương sai (P) với process noise (Q)
+  P[0][0] += dt * (P[1][0] + P[0][1] + dt * P[1][1]) + Q[0][0];
+  P[0][1] += dt * P[1][1];
+  P[1][0] += dt * P[1][1];
+  P[1][1] += Q[1][1];
+
+  // Cập nhật với đo lường
+  float innovation = a_measured - (v_pred - v) / dt - b_a_pred;
+  float S = P[0][0] / (dt * dt) + R;
+  float K[2]; // Kalman Gain
+  K[0] = P[0][0] / (dt * S);
+  K[1] = P[1][0] / (dt * S);
+
+  // Cập nhật trạng thái
+  v = v_pred + K[0] * innovation;
+  b_a = b_a_pred + K[1] * innovation;
+
+  // Cập nhật ma trận hiệp phương sai (P)
+  float temp00 = P[0][0];
+  float temp01 = P[0][1];
+  P[0][0] -= K[0] * temp00;
+  P[0][1] -= K[0] * temp01;
+  P[1][0] -= K[1] * temp00;
+  P[1][1] -= K[1] * temp01;
+}
 
 float calculate_std_deviation(float arr[], int n)
 {
@@ -269,107 +304,3 @@ float calculate_std_deviation(float arr[], int n)
   return sqrt(sum_deviation / n);
 }
 
-void sendTelemetryData()
-{
-  data[COLLECTOR_KEY_LNG] = lng;
-  data[COLLECTOR_KEY_LAT] = lat;
-  data[COLLECTOR_KEY_ACCEL_X] = ax_linear;
-  data[COLLECTOR_KEY_ACCEL_Y] = ay_linear;
-  data[COLLECTOR_KEY_DELTA_T] = dt;
-  size_t data_size = Helper::Measure_Json(data);
-  tb.sendTelemetryJson(data, data_size);
-}
-
-void InitWiFi()
-{
-  Serial.println("Connecting to AP ...");
-  // Attempting to establish a connection to the given WiFi network
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  while (WiFi.status() != WL_CONNECTED)
-  {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println("Connected to AP");
-};
-
-bool reconnect()
-{
-  const wl_status_t status = WiFi.status();
-  if (status == WL_CONNECTED)
-  {
-    return true;
-  }
-  InitWiFi();
-  return true;
-};
-
-void printEvent(sensors_event_t *event)
-{
-  double x = -1000000, y = -1000000, z = -1000000; // dumb values, easy to spot problem
-  if (event->type == SENSOR_TYPE_ACCELEROMETER)
-  {
-    // Serial.print("Accl:");
-    x = event->acceleration.x;
-    y = event->acceleration.y;
-    z = event->acceleration.z;
-  }
-  else if (event->type == SENSOR_TYPE_ORIENTATION)
-  {
-    Serial.print("Orient:");
-    x = event->orientation.x;
-    y = event->orientation.y;
-    z = event->orientation.z;
-  }
-  else if (event->type == SENSOR_TYPE_MAGNETIC_FIELD)
-  {
-    Serial.print("Mag:");
-    x = event->magnetic.x;
-    y = event->magnetic.y;
-    z = event->magnetic.z;
-  }
-  else if (event->type == SENSOR_TYPE_GYROSCOPE)
-  {
-    Serial.print("Gyro:");
-    x = event->gyro.x;
-    y = event->gyro.y;
-    z = event->gyro.z;
-  }
-  else if (event->type == SENSOR_TYPE_ROTATION_VECTOR)
-  {
-    Serial.print("Rot:");
-    x = event->gyro.x;
-    y = event->gyro.y;
-    z = event->gyro.z;
-  }
-  else if (event->type == SENSOR_TYPE_LINEAR_ACCELERATION)
-  {
-    // Serial.print("Linear:");
-    x = event->acceleration.x;
-    y = event->acceleration.y;
-    z = event->acceleration.z;
-  }
-  else if (event->type == SENSOR_TYPE_GRAVITY)
-  {
-    Serial.print("Gravity:");
-    x = event->acceleration.x;
-    y = event->acceleration.y;
-    z = event->acceleration.z;
-  }
-  else
-  {
-    Serial.print("Unk:");
-  }
-
-  // Serial.print("\tx= ");
-  // Serial.print(x);
-  // Serial.print(" |\ty= ");
-  // Serial.print(y);
-  // Serial.print(" |\tz= ");
-  // Serial.println(z);
-  Serial.print(x, 6);
-  Serial.print("\t");
-  Serial.print(y, 6);
-  Serial.print("\t");
-  Serial.println(z, 6);
-}
