@@ -90,7 +90,7 @@ const long getDataInterval = 10;
 
 const float dt = float(taskInterval) / 1000.0;
 
-uint16_t BNO055_SAMPLERATE_DELAY_MS = 100;
+uint16_t BNO055_SAMPLERATE_DELAY_MS = 20;
 //================================================ variable for calculate
 unsigned int count_for_mean = 0;
 float roll, pitch; // after complementary with ax, ay, az
@@ -101,6 +101,8 @@ float ax_linear = 0.0f, ay_linear = 0.0f;
 float ax_temp = 0.0f, ay_temp = 0.0f, az_temp = 0.0f;
 float gx_temp = 0.0f, gy_temp = 0.0f, gz_temp = 0.0f;
 
+
+//================================================ Display support function
 void displayMessage(const char *message) {
   u8g2.firstPage();
   do {
@@ -136,12 +138,12 @@ void displayVelocity(float Vx, float Vy) {
       u8g2.setFont(u8g2_font_ncenB08_tr);
       u8g2.setCursor(10, 20);
       u8g2.print("Vx: ");
-      u8g2.print(Vx * MS_TO_KMH);
+      u8g2.print(Vx);
       u8g2.print(" Km/h");
       
       u8g2.setCursor(10, 40);
       u8g2.print("Vy: ");
-      u8g2.print(Vy * MS_TO_KMH);
+      u8g2.print(Vy);
       u8g2.print(" Km/h");
   } while (u8g2.nextPage());
 }
@@ -177,158 +179,79 @@ void setup() {
 // TODO
 // ax_filter, ay_filter, lat, lon, deltaT, real_velocity
 // ==================================================================================== LOOP
-float arrDataX[10];
-float arrDataY[10];
-int arr_countX = 0;
-int arr_countY = 0;
-int stop_count = 0;
-int moving_count = 0;
+// Khai báo biến toàn cục
+// Khai báo biến toàn cục
 float vx = 0.0f, vy = 0.0f;
-void loop()
-{
-  // Get data
-  sensors_event_t orientationData, angVelocityData, linearAccelData, magnetometerData, accelerometerData, gravityData;
+float prevAx = 0.0f, prevAy = 0.0f; // Lưu giá trị gia tốc trước đó
+float arrDataX[10], arrDataY[10];
+int arr_countX = 0, arr_countY = 0;
+int stop_count = 0, moving_count = 0;
+unsigned long lastTime = 0; // Thời gian lần đo trước đó
+
+void loop() {
+  // Lấy dữ liệu gia tốc
+  sensors_event_t linearAccelData;
   bno.getEvent(&linearAccelData, Adafruit_BNO055::VECTOR_LINEARACCEL);
 
-  uint8_t system, gyro, accel, mag = 0;
-  // bno.getCalibration(&system, &gyro, &accel, &mag);
+  // Tính thời gian delta (Δt) theo giây
+  unsigned long currentTime = millis();
+  float dt = (currentTime - lastTime) / 1000.0; // Chuyển ms thành giây
+  lastTime = currentTime;
 
-    float stdX = 0.0f, stdY = 0.0f;
-    arrDataX[arr_countX++] = linearAccelData.acceleration.x;
-    arrDataY[arr_countX++] = linearAccelData.acceleration.y;
+  // Lưu giá trị gia tốc hiện tại
+  float ax = linearAccelData.acceleration.x;
+  float ay = linearAccelData.acceleration.y;
 
-    vx += linearAccelData.acceleration.x * 0.1;
-    vy += linearAccelData.acceleration.y * 0.1;
-    Serial.print(vx); Serial.print("\t"); Serial.println(vy);
-    if (arr_countX == 10)
-    {
+  arrDataX[arr_countX++] = ax;
+  arrDataY[arr_countY++] = ay;
 
-      stdX = calculate_std_deviation(arrDataX, 10);
-      stdY = calculate_std_deviation(arrDataY, 10);
+  // Tính gia tốc trung điểm (a_mid)
+  float a_mid_x = (ax + prevAx) / 2.0f;
+  float a_mid_y = (ay + prevAy) / 2.0f;
 
-      if (stdX < 0.25 && stdY < 0.21) stop_count++;
-      else moving_count++;
-      if (stop_count == 3)
-      {
-        Serial.println("STOP");
-        vx = 0.0f;
-        vy = 0.0f;
-        stop_count = 0;
-      }
-      if(moving_count == 3)
-      {
-        Serial.println("MOVING");
-        moving_count = 0;
-      }
-      arr_countX = 0;
+  // Tính vận tốc theo Midpoint Riemann Sum
+  vx += a_mid_x * dt;
+  vy += a_mid_y * dt;
+
+  // Cập nhật giá trị gia tốc trước đó
+  prevAx = ax;
+  prevAy = ay;
+
+  // Hiển thị kết quả vận tốc
+  Serial.print("vx: "); Serial.print(vx);
+  Serial.print("\tvy: "); Serial.println(vy);
+
+  // Kiểm tra khi mảng đủ dữ liệu
+  if (arr_countX == 10 && arr_countY == 10) {
+    float stdX = calculate_std_deviation(arrDataX, 10);
+    float stdY = calculate_std_deviation(arrDataY, 10);
+
+    // Kiểm tra trạng thái dừng hay di chuyển
+    if (stdX < 0.25 && stdY < 0.21) stop_count++;
+    else moving_count++;
+
+    // Reset vận tốc khi phát hiện dừng
+    if (stop_count == 3) {
+      Serial.println("STOP");
+      vx = 0.0f; vy = 0.0f; // Reset vận tốc
+      stop_count = 0;
+    }
+    if (moving_count == 3) {
+      Serial.println("MOVING");
+      moving_count = 0;
     }
 
+    // Reset bộ đếm mảng
+    arr_countX = 0;
+    arr_countY = 0;
+  }
+
+  // Hiển thị vận tốc lên màn hình
   displayVelocity(vx, vy);
 
   delay(BNO055_SAMPLERATE_DELAY_MS);
-  // currentMillis = millis();
+}
 
-  // ax_temp = a.acceleration.x; ay_temp = a.acceleration.y; az_temp = a.acceleration.z + 0.1;
-  // gx_temp = g.gyro.x; gy_temp = g.gyro.y; gz_temp = g.gyro.z;
-
-  // if (currentMillis - getDataMillis >= getDataInterval)
-  // { // ============================================ MEAN
-  //   getDataMillis = currentMillis;
-
-  //   ax += ax_temp;
-  //   ay += ay_temp;
-  //   az += az_temp;
-  //   gx += gx_temp;
-  //   gy += gy_temp;
-  //   gz += gz_temp;
-  //   count_for_mean += 1;
-  // }
-
-  // if(currentMillis - gps_process_millis >= 10){ // ==================================================== ENCODE GPS
-  //   gps_process_millis = currentMillis;
-  //   while (ss.available() > 0)
-  //   if (gps.encode(ss.read()))
-  //   {
-  //     if (gps.location.isValid())
-  //     {
-  //       lat = gps.location.lat();
-  //       lng = gps.location.lng();
-  //     }
-  // };
-  // }
-
-  // if (currentMillis - taskMillis >= taskInterval)
-  // { // ============================================= FILTER Gravity
-  //   taskMillis = currentMillis;
-  //   // average from 100 measurement
-  //   ax = ax / (float)count_for_mean;
-  //   ay = ay / (float)count_for_mean;
-  //   az = az / (float)count_for_mean;
-  //   gx = gx / (float)count_for_mean;
-  //   gy = gy / (float)count_for_mean;
-  //   gz = gz / (float)count_for_mean;
-  //   count_for_mean = 1;
-
-  //   float accelRoll = atan2(ay, sqrt(ax * ax + az * az));
-  //   float accelPitch = atan2(-ax, sqrt(ay * ay + az * az));
-
-  //   // (b) Integrate gyro angles
-  //   roll += gx * dt;
-  //   pitch += gy * dt;
-
-  //   // (c) Simple complementary filter
-  //   float alpha = 0.5f;
-  //   roll = alpha * roll + (1 - alpha) * accelRoll;
-  //   pitch = alpha * pitch + (1 - alpha) * accelPitch;
-
-  //   // Rotate gravity (0, 0, +GRAVITY) in sensor frame
-  //   float gx_comp = sin(pitch) * GRAVITY * -1.0f;              // X comp
-  //   float gy_comp = -cos(pitch) * sin(roll) * GRAVITY * -1.0f; // Y comp
-  //   float gz_comp = -cos(pitch) * cos(roll) * GRAVITY * -1.0f; // Z comp
-
-  //   ax_linear = ax - gx_comp;
-  //   ay_linear = ay - gy_comp;
-  //   float az_linear = az - gz_comp;
-
-  //   // 5) Filter the linear acceleration
-  //   float beta = 0.9f; // tune
-  //   ax_filtered = beta * ax_filtered + (1.0f - beta) * ax_linear;
-  //   ay_filtered = beta * ay_filtered + (1.0f - beta) * ay_linear;
-  //   az_filtered = beta * az_filtered + (1.0f - beta) * az_linear;
-
-  //   if (gps.location.isUpdated()) // Nếu có dữ liệu mới
-  //   {
-  //     Serial.print("Latitude: ");
-  //     Serial.print(gps.location.lat(), 6);
-  //     Serial.print(", Longitude: ");
-  //     Serial.println(gps.location.lng(), 6);
-  //   }
-  //   // Plot
-  //   Serial.print(ax);Serial.print("\t");Serial.print(ay);Serial.print("\t");Serial.print(az);Serial.print("\t");
-  //   // Serial.print(gx); Serial.print("\t"); Serial.print(gy); Serial.print("\t"); Serial.println(gz);
-  //   // Serial.print(ax_linear); Serial.print("\t"); Serial.print(ay_linear); Serial.print("\t"); Serial.println(az_linear); Serial.print("\t");
-  //   // Serial.print(vx); Serial.print("\t"); Serial.print(vy); Serial.print("\t"); Serial.println(vz);
-  //   // Serial.print(offset_ax); Serial.print("\t"); Serial.print(offset_ay); Serial.print("\t"); Serial.print(offset_az); Serial.print("\t");
-  //   // Serial.print(offset_gx); Serial.print("\t"); Serial.print(offset_gy); Serial.print("\t"); Serial.println(offset_gz);
-  //   Serial.print(ax_linear); Serial.print("\t"); Serial.print(ay_linear); Serial.print("\t");
-  //   Serial.print(lat, 6); Serial.print("\t"); Serial.println(lng, 6);
-  // };
-
-  // publish to server
-  // if (!reconnect()) {
-  //   return;
-  // }
-
-  // if (!tb.connected()) {
-  //   Serial.printf("Connecting to: (%s) with token (%s)\n", THINGSBOARD_SERVER, TOKEN);
-  //   if (!tb.connect(THINGSBOARD_SERVER, TOKEN, THINGSBOARD_PORT)) {
-  //     Serial.println("Failed to connect");
-  //     return;
-  //   }
-  // };
-  // sendTelemetryData();
-  // tb.loop();
-};
 
 float calculate_std_deviation(float arr[], int n)
 {

@@ -1,0 +1,102 @@
+ // currentMillis = millis();
+
+  // ax_temp = a.acceleration.x; ay_temp = a.acceleration.y; az_temp = a.acceleration.z + 0.1;
+  // gx_temp = g.gyro.x; gy_temp = g.gyro.y; gz_temp = g.gyro.z;
+
+  // if (currentMillis - getDataMillis >= getDataInterval)
+  // { // ============================================ MEAN
+  //   getDataMillis = currentMillis;
+
+  //   ax += ax_temp;
+  //   ay += ay_temp;
+  //   az += az_temp;
+  //   gx += gx_temp;
+  //   gy += gy_temp;
+  //   gz += gz_temp;
+  //   count_for_mean += 1;
+  // }
+
+  // if(currentMillis - gps_process_millis >= 10){ // ==================================================== ENCODE GPS
+  //   gps_process_millis = currentMillis;
+  //   while (ss.available() > 0)
+  //   if (gps.encode(ss.read()))
+  //   {
+  //     if (gps.location.isValid())
+  //     {
+  //       lat = gps.location.lat();
+  //       lng = gps.location.lng();
+  //     }
+  // };
+  // }
+
+  // if (currentMillis - taskMillis >= taskInterval)
+  // { // ============================================= FILTER Gravity
+  //   taskMillis = currentMillis;
+  //   // average from 100 measurement
+  //   ax = ax / (float)count_for_mean;
+  //   ay = ay / (float)count_for_mean;
+  //   az = az / (float)count_for_mean;
+  //   gx = gx / (float)count_for_mean;
+  //   gy = gy / (float)count_for_mean;
+  //   gz = gz / (float)count_for_mean;
+  //   count_for_mean = 1;
+
+  //   float accelRoll = atan2(ay, sqrt(ax * ax + az * az));
+  //   float accelPitch = atan2(-ax, sqrt(ay * ay + az * az));
+
+  //   // (b) Integrate gyro angles
+  //   roll += gx * dt;
+  //   pitch += gy * dt;
+
+  //   // (c) Simple complementary filter
+  //   float alpha = 0.5f;
+  //   roll = alpha * roll + (1 - alpha) * accelRoll;
+  //   pitch = alpha * pitch + (1 - alpha) * accelPitch;
+
+  //   // Rotate gravity (0, 0, +GRAVITY) in sensor frame
+  //   float gx_comp = sin(pitch) * GRAVITY * -1.0f;              // X comp
+  //   float gy_comp = -cos(pitch) * sin(roll) * GRAVITY * -1.0f; // Y comp
+  //   float gz_comp = -cos(pitch) * cos(roll) * GRAVITY * -1.0f; // Z comp
+
+  //   ax_linear = ax - gx_comp;
+  //   ay_linear = ay - gy_comp;
+  //   float az_linear = az - gz_comp;
+
+  //   // 5) Filter the linear acceleration
+  //   float beta = 0.9f; // tune
+  //   ax_filtered = beta * ax_filtered + (1.0f - beta) * ax_linear;
+  //   ay_filtered = beta * ay_filtered + (1.0f - beta) * ay_linear;
+  //   az_filtered = beta * az_filtered + (1.0f - beta) * az_linear;
+
+  //   if (gps.location.isUpdated()) // Nếu có dữ liệu mới
+  //   {
+  //     Serial.print("Latitude: ");
+  //     Serial.print(gps.location.lat(), 6);
+  //     Serial.print(", Longitude: ");
+  //     Serial.println(gps.location.lng(), 6);
+  //   }
+  //   // Plot
+  //   Serial.print(ax);Serial.print("\t");Serial.print(ay);Serial.print("\t");Serial.print(az);Serial.print("\t");
+  //   // Serial.print(gx); Serial.print("\t"); Serial.print(gy); Serial.print("\t"); Serial.println(gz);
+  //   // Serial.print(ax_linear); Serial.print("\t"); Serial.print(ay_linear); Serial.print("\t"); Serial.println(az_linear); Serial.print("\t");
+  //   // Serial.print(vx); Serial.print("\t"); Serial.print(vy); Serial.print("\t"); Serial.println(vz);
+  //   // Serial.print(offset_ax); Serial.print("\t"); Serial.print(offset_ay); Serial.print("\t"); Serial.print(offset_az); Serial.print("\t");
+  //   // Serial.print(offset_gx); Serial.print("\t"); Serial.print(offset_gy); Serial.print("\t"); Serial.println(offset_gz);
+  //   Serial.print(ax_linear); Serial.print("\t"); Serial.print(ay_linear); Serial.print("\t");
+  //   Serial.print(lat, 6); Serial.print("\t"); Serial.println(lng, 6);
+  // };
+
+  // publish to server
+  // if (!reconnect()) {
+  //   return;
+  // }
+
+  // if (!tb.connected()) {
+  //   Serial.printf("Connecting to: (%s) with token (%s)\n", THINGSBOARD_SERVER, TOKEN);
+  //   if (!tb.connect(THINGSBOARD_SERVER, TOKEN, THINGSBOARD_PORT)) {
+  //     Serial.println("Failed to connect");
+  //     return;
+  //   }
+  // };
+  // sendTelemetryData();
+  // tb.loop();
